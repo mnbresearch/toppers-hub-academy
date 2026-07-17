@@ -1,0 +1,25 @@
+name: daily-fee-digest
+
+# Emails a daily due/overdue fee digest for Toppers Hub Academy.
+# Needs two repo secrets (Settings > Secrets and variables > Actions):
+#   SUPABASE_SERVICE_KEY  - already added
+#   RESEND_API_KEY        - add after you create a free key at resend.com
+on:
+  schedule:
+    - cron: "30 3 * * *"    # 09:00 IST daily (03:30 UTC)
+  workflow_dispatch:         # run manually from the Actions tab
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Send digest
+        env:
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          DIGEST_TO: ${{ secrets.DIGEST_TO }}
+        run: node scripts/digest.mjs
