@@ -1,0 +1,21 @@
+name: keep-supabase-awake
+
+# Pings the Supabase REST API on a schedule so the free project
+# never pauses from inactivity. Uses only the public anon key.
+on:
+  schedule:
+    - cron: "17 6 * * *"    # every day at 06:17 UTC
+  workflow_dispatch:         # lets you run it manually from the Actions tab
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Supabase
+        run: |
+          ANON="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imtya2xnc21lYW1ueGVhd2RsbWthIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE0MjcyMzksImV4cCI6MjA5NzAwMzIzOX0.-spjz81DCuVP0gvPP3Gxo3wvvRXat4sZdjO_mLMWl5s"
+          code=$(curl -s -o /dev/null -w "%{http_code}" \
+            "https://krklgsmeamnxeawdlmka.supabase.co/rest/v1/teachers?select=id&limit=1" \
+            -H "apikey: $ANON" -H "Authorization: Bearer $ANON")
+          echo "Supabase responded with HTTP $code"
+          if [ "$code" != "200" ]; then echo "Unexpected status $code"; exit 1; fi
