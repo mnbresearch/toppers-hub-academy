@@ -86,6 +86,14 @@
     .btn:active{transform:scale(.97)}
     .btnrow{display:flex;gap:8px;flex-wrap:wrap}
 
+    /* Attendance toggle buttons */
+    .attbtn{width:34px;height:34px;border-radius:10px;border:1px solid var(--line);background:var(--card2);
+      color:var(--muted);font-weight:800;font-size:13px;cursor:pointer;flex:none}
+    .attbtn:active{transform:scale(.92)}
+    .attbtn.att-p{background:var(--green);border-color:var(--green);color:#04220f}
+    .attbtn.att-l{background:var(--amber);border-color:var(--amber);color:#241800}
+    .attbtn.att-a{background:var(--red);border-color:var(--red);color:#2a0606}
+
     /* Search */
     .search{width:100%;background:var(--card);border:1px solid var(--line);border-radius:13px;
       padding:12px 14px;color:var(--text);font-size:14px;margin-bottom:12px}
@@ -101,8 +109,8 @@
     nav.tabs{position:fixed;left:0;right:0;bottom:0;z-index:30;
       background:rgba(15,20,40,.92);backdrop-filter:blur(14px);border-top:1px solid var(--line);
       display:flex;justify-content:space-around;padding:8px 6px calc(8px + env(safe-area-inset-bottom))}
-    nav.tabs button{background:none;border:none;color:var(--muted);font-size:10.5px;font-weight:600;
-      display:flex;flex-direction:column;align-items:center;gap:3px;padding:5px 12px;border-radius:12px;cursor:pointer}
+    nav.tabs button{background:none;border:none;color:var(--muted);font-size:10px;font-weight:600;flex:1;
+      display:flex;flex-direction:column;align-items:center;gap:3px;padding:5px 4px;border-radius:12px;cursor:pointer}
     nav.tabs button .ic{font-size:20px;line-height:1}
     nav.tabs button.active{color:var(--text)}
     nav.tabs button.active .ic{transform:translateY(-1px)}
@@ -170,6 +178,7 @@
   <nav class="tabs hidden" id="tabs">
     <button data-view="dashboard" class="active"><span class="ic">🏠</span>Home</button>
     <button data-view="students"><span class="ic">🎓</span>Students</button>
+    <button data-view="attendance"><span class="ic">📋</span>Attend</button>
     <button data-view="teachers"><span class="ic">👩‍🏫</span>Teachers</button>
     <button data-view="money"><span class="ic">💰</span>Money</button>
   </nav>
@@ -181,6 +190,8 @@
 
   <!-- Supabase client (loaded from CDN; cached for offline by the service worker) -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- jsPDF for shareable payment receipts -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="config.js"></script>
   <script src="app.js"></script>
   <script>

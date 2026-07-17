@@ -13,8 +13,8 @@ const CLOUD = !!(CFG.SUPABASE_URL && CFG.SUPABASE_ANON_KEY);
 let sb = null;
 if (CLOUD && window.supabase) sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY);
 
-const DB = { teachers: [], students: [], payments: [] };
-const STATE = { view: "dashboard", search: "" };
+const DB = { teachers: [], students: [], payments: [], attendance: [] };
+const STATE = { view: "dashboard", search: "", attDate: null };
 
 /* ---------------- tiny DOM helpers ---------------- */
 const $ = (s) => document.querySelector(s);
@@ -52,6 +52,7 @@ const api = {
 };
 async function loadAll(){
   [DB.teachers, DB.students, DB.payments] = await Promise.all([api.list("teachers"), api.list("students"), api.list("payments")]);
+  try{ DB.attendance = await api.list("attendance"); }catch(e){ DB.attendance = DB.attendance||[]; }
 }
 
 /* ---------------- date + money utils ---------------- */
@@ -118,6 +119,7 @@ function render(){
   setTab(STATE.view);
   if(STATE.view==="dashboard") return renderDashboard();
   if(STATE.view==="students")  return renderStudents();
+  if(STATE.view==="attendance")return renderAttendance();
   if(STATE.view==="teachers")  return renderTeachers();
   if(STATE.view==="money")     return renderMoney();
 }
@@ -279,6 +281,127 @@ function renderMoney(){
 }
 
 /* ============================================================
+   ATTENDANCE
+   ============================================================ */
+function attRec(studentId,date){ return DB.attendance.find(a=>a.student_id===studentId && a.date===date); }
+function attStats(studentId){
+  const recs=DB.attendance.filter(a=>a.student_id===studentId);
+  const present=recs.filter(a=>a.status==="Present"||a.status==="Late").length;
+  const total=recs.length;
+  return { total, present, absent:recs.filter(a=>a.status==="Absent").length, pct: total?Math.round(present/total*100):null };
+}
+function shiftAttDate(days){ const d=parseD(STATE.attDate||todayISO()); d.setDate(d.getDate()+days); const iso=isoOf(d); if(iso>todayISO()) return; STATE.attDate=iso; renderAttendance(); }
+async function markAttendance(studentId,date,status){
+  const ex=attRec(studentId,date);
+  try{
+    if(ex){ if(ex.status===status){ await api.remove("attendance",ex.id); } else { await api.update("attendance",ex.id,{status}); } }
+    else { await api.insert("attendance",{student_id:studentId,date,status}); }
+    DB.attendance=await api.list("attendance"); renderAttendance();
+  }catch(e){ toast("Error: "+(e.message||e)); }
+}
+async function markAllPresent(date){
+  const active=DB.students.filter(s=>s.status==="Active");
+  try{
+    for(const s of active){ if(!attRec(s.id,date)) await api.insert("attendance",{student_id:s.id,date,status:"Present"}); }
+    DB.attendance=await api.list("attendance"); renderAttendance(); toast("Marked all present ✓");
+  }catch(e){ toast("Error: "+(e.message||e)); }
+}
+function renderAttendance(){
+  el("hdrSub").textContent="Attendance";
+  const date=STATE.attDate||todayISO(); STATE.attDate=date;
+  const active=DB.students.filter(s=>s.status==="Active").sort((a,b)=>(a.name||"").localeCompare(b.name||""));
+  const dayRecs=DB.attendance.filter(a=>a.date===date && active.some(s=>s.id===a.student_id));
+  const present=dayRecs.filter(a=>a.status==="Present").length;
+  const late=dayRecs.filter(a=>a.status==="Late").length;
+  const absent=dayRecs.filter(a=>a.status==="Absent").length;
+  const unmarked=Math.max(0, active.length-dayRecs.length);
+  const isToday=date===todayISO();
+  app().innerHTML=`
+   <div class="view">
+    <div class="card row" style="justify-content:space-between;gap:6px;align-items:center">
+      <button class="btn ghost sm" onclick="shiftAttDate(-1)">‹ Prev</button>
+      <div class="center" style="flex:1"><div style="font-weight:800">${isToday?"Today":fmtShort(date)}</div>
+        <div class="muted" style="font-size:11px">${fmtDate(date)}</div></div>
+      <button class="btn ghost sm" onclick="shiftAttDate(1)" ${isToday?'disabled style="opacity:.35"':''}>Next ›</button>
+    </div>
+    <div class="stats" style="grid-template-columns:repeat(3,1fr)">
+      <div class="stat g"><div class="l">Present</div><div class="n">${present+late}</div></div>
+      <div class="stat r"><div class="l">Absent</div><div class="n">${absent}</div></div>
+      <div class="stat a"><div class="l">Unmarked</div><div class="n">${unmarked}</div></div>
+    </div>
+    ${active.length?`<button class="btn primary block" onclick="markAllPresent('${date}')">✓ Mark all present</button><div style="height:8px"></div>`:""}
+    ${active.length? active.map(s=>{
+      const r=attRec(s.id,date); const st=r?r.status:null;
+      const b=(lbl,val,cls)=>`<button class="attbtn ${st===val?cls:''}" onclick="markAttendance('${s.id}','${date}','${val}')">${lbl}</button>`;
+      return `<div class="card row" style="justify-content:space-between;gap:8px;padding:10px 12px">
+        <div class="row grow" style="gap:10px;min-width:0">
+          <div class="avatar" style="width:38px;height:38px;font-size:14px">${esc(initials(s.name))}</div>
+          <div class="grow" style="min-width:0"><div class="ellipsis" style="font-weight:700">${esc(s.name)}</div>
+          <div class="muted ellipsis" style="font-size:11px">${esc(s.grade||teacherName(s.teacher_id)||"")}</div></div>
+        </div>
+        <div class="row" style="gap:5px;flex:none">${b("P","Present","att-p")}${b("L","Late","att-l")}${b("A","Absent","att-a")}</div>
+      </div>`;
+    }).join("") : `<div class="card empty"><div class="big">📋</div>Add students first, then take attendance here.</div>`}
+    <div class="muted center" style="font-size:11.5px;margin-top:6px">Tap P / L / A to mark. Tap the same button again to clear.</div>
+   </div>`;
+}
+
+/* ============================================================
+   PDF RECEIPT  (shareable to WhatsApp)
+   ============================================================ */
+async function shareReceiptPDF(studentId,payId){
+  const s=DB.students.find(x=>x.id===studentId); if(!s) return;
+  let p = payId ? DB.payments.find(x=>x.id===payId) : null;
+  if(!p) p = { amount:s.monthly_fee, paid_on:todayISO(), method:"Cash", for_month:monthKey() };
+  const ctor=(window.jspdf&&window.jspdf.jsPDF)||window.jsPDF;
+  if(!ctor){ toast("Receipt tool still loading — try again in a moment"); return; }
+  const W=384, doc=new ctor({unit:"pt",format:[W,540]});
+  doc.setFillColor(99,102,241); doc.rect(0,0,W,96,"F");
+  doc.setTextColor(255,255,255);
+  doc.setFont("helvetica","bold"); doc.setFontSize(19); doc.text(CFG.ACADEMY_NAME||"Academy",24,42);
+  doc.setFont("helvetica","normal"); doc.setFontSize(11); doc.text("Payment Receipt",24,64);
+  if(CFG.ACADEMY_CONTACT){ doc.setFontSize(9); doc.text(String(CFG.ACADEMY_CONTACT),24,82); }
+  doc.setFontSize(11); doc.setTextColor(120,120,130); doc.text("Amount received",24,138);
+  doc.setTextColor(34,150,90); doc.setFont("helvetica","bold"); doc.setFontSize(30);
+  doc.text(money(p.amount),24,172);
+  let y=214; doc.setFontSize(11);
+  const row=(k,v)=>{ doc.setTextColor(120,120,130); doc.setFont("helvetica","normal"); doc.text(k,24,y);
+    doc.setTextColor(17,24,39); doc.setFont("helvetica","bold"); doc.text(String(v),W-24,y,{align:"right"});
+    doc.setDrawColor(228,228,234); doc.line(24,y+10,W-24,y+10); y+=32; };
+  row("Received from", s.name);
+  row("Date", fmtDate(p.paid_on));
+  row("Method", p.method||"Cash");
+  if(p.for_month) row("For", p.for_month);
+  row("Monthly fee", money(s.monthly_fee));
+  if(s.next_due_date) row("Next due", fmtDate(s.next_due_date));
+  doc.setTextColor(120,120,130); doc.setFont("helvetica","normal"); doc.setFontSize(10);
+  doc.text("Thank you! Please keep this as proof of payment.",24,y+8);
+  doc.setFontSize(8); doc.setTextColor(160,160,170);
+  doc.text("Generated "+fmtDate(todayISO())+" · "+(CFG.ACADEMY_NAME||"Academy"),24,522);
+  const fname="Receipt-"+String(s.name||"student").replace(/\s+/g,"-")+"-"+(p.paid_on||todayISO())+".pdf";
+  const blob=doc.output("blob"); const file=new File([blob],fname,{type:"application/pdf"});
+  if(navigator.canShare && navigator.canShare({files:[file]})){
+    try{ await navigator.share({files:[file],title:"Payment Receipt",text:(CFG.ACADEMY_NAME||"Academy")+" — receipt for "+s.name}); return; }
+    catch(e){ if(e&&e.name==="AbortError") return; }
+  }
+  const url=URL.createObjectURL(blob); const a=document.createElement("a"); a.href=url; a.download=fname; a.click(); setTimeout(()=>URL.revokeObjectURL(url),2000);
+  toast("Receipt saved ✓");
+}
+function openReceiptOptions(studentId,payId){
+  const s=DB.students.find(x=>x.id===studentId); if(!s) return;
+  const p=DB.payments.find(x=>x.id===payId)||{}; const wa=s.phone||s.guardian_phone||"";
+  openSheet(`
+    <div class="sheettop"><h3>Payment saved ✅</h3><button class="iconbtn" style="background:var(--card2)" onclick="closeSheet()">✕</button></div>
+    <div class="muted" style="margin:0 2px 12px">${esc(s.name)} · ${money(p.amount||s.monthly_fee)} · next due ${fmtDate(s.next_due_date)}</div>
+    <button class="btn primary block" onclick="shareReceiptPDF('${studentId}','${payId}')">📄 Share PDF receipt</button>
+    <div style="height:8px"></div>
+    <button class="btn wa block" ${wa?"":'disabled style="opacity:.5"'} onclick="openWA('${esc(wa)}',msgReceipt(DB.students.find(x=>x.id==='${studentId}'),DB.payments.find(x=>x.id==='${payId}')||{}))">💬 WhatsApp text receipt</button>
+    <div style="height:8px"></div>
+    <button class="btn ghost block" onclick="closeSheet()">Done</button>
+  `);
+}
+
+/* ============================================================
    SHEETS / MODALS
    ============================================================ */
 function openSheet(html){ el("modalRoot").innerHTML=`<div class="overlay" onclick="if(event.target===this)closeSheet()"><div class="sheet"><div class="grabber"></div>${html}</div></div>`; document.body.style.overflow="hidden"; }
@@ -301,6 +424,7 @@ function openStudent(id){
       ${s.co_teacher_id?`<div class="kv"><span>Co-teacher</span><b>${esc(teacherName(s.co_teacher_id))} (${money(s.co_teacher_fee)})</b></div>`:""}
       ${s.grade?`<div class="kv"><span>Class</span><b>${esc(s.grade)}</b></div>`:""}
       <div class="kv"><span>Status</span><b>${esc(s.status)}</b></div>
+      ${(()=>{const a=attStats(s.id);return a.total?`<div class="kv"><span>Attendance</span><b>${a.pct}% <span class="tag">(${a.present}/${a.total})</span></b></div>`:"";})()}
       ${s.phone?`<div class="kv"><span>Phone</span><b>${esc(s.phone)}</b></div>`:""}
       ${s.guardian_phone?`<div class="kv"><span>Guardian</span><b>${esc(s.guardian_phone)}</b></div>`:""}
       ${s.notes?`<div class="kv"><span>Notes</span><b style="max-width:60%;text-align:right">${esc(s.notes)}</b></div>`:""}
@@ -311,9 +435,10 @@ function openStudent(id){
     <button class="btn ghost block" onclick="openMessages('${s.id}')">💬 Send reminder / message</button>
 
     <h2 class="section" style="margin-top:18px">Payment history</h2>
-    ${pays.length? pays.map(p=>`<div class="card row" style="justify-content:space-between;padding:11px 14px">
+    ${pays.length? pays.map(p=>`<div class="card row" style="justify-content:space-between;padding:10px 12px 10px 14px">
         <div class="muted" style="font-size:13px">${fmtDate(p.paid_on)} · ${esc(p.method||"Cash")}</div>
-        <b style="color:var(--green)">${money(p.amount)}</b></div>`).join("")
+        <div class="row" style="gap:8px"><b style="color:var(--green)">${money(p.amount)}</b>
+        <button class="btn ghost sm" title="Share receipt" onclick="shareReceiptPDF('${s.id}','${p.id}')">📄</button></div></div>`).join("")
       :`<div class="muted" style="margin:0 4px 10px">No payments yet.</div>`}
 
     <div class="btnrow" style="margin-top:14px">
@@ -540,8 +665,7 @@ async function savePayment(id){
     const saved=await api.insert("payments",pay);
     if(adv>0){ const base=s.next_due_date||todayISO(); await api.update("students",id,{ next_due_date:addMonthsISO(base,adv) }); }
     await loadAll(); closeSheet(); render(); toast("Payment saved ✓");
-    const fresh=DB.students.find(x=>x.id===id);
-    if((fresh.phone||fresh.guardian_phone) && confirm("Send a payment receipt on WhatsApp?")) openWA(fresh.phone||fresh.guardian_phone, msgReceipt(fresh,saved));
+    openReceiptOptions(id, saved.id);
   }catch(e){ toast("Error: "+(e.message||e)); }
 }
 

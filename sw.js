@@ -8,7 +8,8 @@ const ASSETS = [
   "./manifest.json",
   "./icon-192.png",
   "./icon-512.png",
-  "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"
+  "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2",
+  "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"
 ];
 
 self.addEventListener("install", (e) => {
