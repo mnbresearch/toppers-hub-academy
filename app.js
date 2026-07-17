@@ -594,6 +594,8 @@ el("menuBtn").addEventListener("click",()=>{
       <div class="kv"><span>Students</span><b>${DB.students.length}</b></div>
       <div class="kv"><span>Teachers</span><b>${DB.teachers.length}</b></div>
     </div>
+    <button class="btn primary block" onclick="closeSheet();doInstall()">📲 Install app on this device</button>
+    <div style="height:8px"></div>
     <button class="btn ghost block" onclick="exportData()">⬇️ Export backup (JSON)</button>
     <div style="height:8px"></div>
     ${CLOUD?`<button class="btn ghost block" onclick="signOut()">🚪 Log out</button>`
@@ -605,6 +607,58 @@ function exportData(){
   const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="toppers-hub-backup-"+todayISO()+".json"; a.click();
   toast("Backup downloaded ✓");
 }
+
+/* ============================================================
+   INSTALL TO PHONE  (Add to Home Screen)
+   ============================================================ */
+let _deferredPrompt = null;
+function isStandalone(){ return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true; }
+function isIOS(){ return /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.MSStream; }
+
+window.addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault();
+  _deferredPrompt = e;
+  if(!isStandalone()) el("installBtn").classList.remove("hidden");
+});
+window.addEventListener("appinstalled", () => {
+  _deferredPrompt = null;
+  el("installBtn").classList.add("hidden");
+  toast("App installed 🎉");
+});
+
+async function doInstall(){
+  if(_deferredPrompt){
+    _deferredPrompt.prompt();
+    const { outcome } = await _deferredPrompt.userChoice;
+    if(outcome === "accepted"){ el("installBtn").classList.add("hidden"); }
+    _deferredPrompt = null;
+    return;
+  }
+  // iOS Safari (and browsers with no prompt event) — show manual steps
+  openSheet(`
+    <div class="sheettop"><h3>Install on your phone</h3><button class="iconbtn" style="background:var(--card2)" onclick="closeSheet()">✕</button></div>
+    ${isIOS()? `
+      <div class="card">
+        <div style="font-weight:700;margin-bottom:8px">📱 iPhone / iPad (Safari)</div>
+        <div class="kv"><span>1.</span><b style="font-weight:500;text-align:right">Tap the <b>Share</b> button (□ with ↑) at the bottom of Safari</b></div>
+        <div class="kv"><span>2.</span><b style="font-weight:500;text-align:right">Scroll and tap <b>Add to Home Screen</b></b></div>
+        <div class="kv"><span>3.</span><b style="font-weight:500;text-align:right">Tap <b>Add</b> — the Toppers Hub icon appears on your home screen</b></div>
+      </div>`
+    : `
+      <div class="card">
+        <div style="font-weight:700;margin-bottom:8px">📱 Android (Chrome)</div>
+        <div class="kv"><span>1.</span><b style="font-weight:500;text-align:right">Tap the <b>⋮</b> menu (top-right)</b></div>
+        <div class="kv"><span>2.</span><b style="font-weight:500;text-align:right">Tap <b>Install app</b> (or <b>Add to Home screen</b>)</b></div>
+        <div class="kv"><span>3.</span><b style="font-weight:500;text-align:right">Confirm — the icon appears on your home screen</b></div>
+      </div>
+      <div class="muted center" style="font-size:12px;margin-top:10px">On a computer, use the install icon in the browser's address bar.</div>`}
+  `);
+}
+el("installBtn").addEventListener("click", doInstall);
+// If already installed, never show the floating button
+if(isStandalone()) el("installBtn").classList.add("hidden");
+// On iOS there is no beforeinstallprompt — show the button so they can get steps
+if(isIOS() && !isStandalone()) el("installBtn").classList.remove("hidden");
 
 /* ============================================================
    BOOT
