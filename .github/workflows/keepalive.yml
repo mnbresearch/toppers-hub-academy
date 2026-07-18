@@ -1,21 +1,48 @@
 name: keep-supabase-awake
 
-# Pings the Supabase REST API on a schedule so the free project
-# never pauses from inactivity. Uses only the public anon key.
+# Keeps everything awake with no manual work:
+#  1) Pings the Supabase REST API every day so the free project never hits the
+#     7-day inactivity pause. Uses only the public anon key, with 3 retries.
+#  2) Commits a tiny heartbeat file on the 1st of each month so this scheduled
+#     workflow itself is never auto-disabled (GitHub disables schedules after
+#     60 days with no repository commits).
 on:
   schedule:
-    - cron: "17 6 * * *"    # every day at 06:17 UTC
-  workflow_dispatch:         # lets you run it manually from the Actions tab
+    - cron: "17 6 * * *"     # every day at 06:17 UTC
+  workflow_dispatch:          # run manually anytime from the Actions tab
+
+permissions:
+  contents: write
 
 jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - name: Ping Supabase
+      - uses: actions/checkout@v4
+
+      - name: Ping Supabase (with retries)
         run: |
           ANON="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imtya2xnc21lYW1ueGVhd2RsbWthIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE0MjcyMzksImV4cCI6MjA5NzAwMzIzOX0.-spjz81DCuVP0gvPP3Gxo3wvvRXat4sZdjO_mLMWl5s"
-          code=$(curl -s -o /dev/null -w "%{http_code}" \
-            "https://krklgsmeamnxeawdlmka.supabase.co/rest/v1/teachers?select=id&limit=1" \
-            -H "apikey: $ANON" -H "Authorization: Bearer $ANON")
-          echo "Supabase responded with HTTP $code"
-          if [ "$code" != "200" ]; then echo "Unexpected status $code"; exit 1; fi
+          URL="https://krklgsmeamnxeawdlmka.supabase.co/rest/v1/teachers?select=id&limit=1"
+          ok=0
+          for i in 1 2 3; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "$URL" -H "apikey: $ANON" -H "Authorization: Bearer $ANON")
+            echo "Attempt $i -> HTTP $code"
+            if [ "$code" = "200" ]; then ok=1; break; fi
+            sleep 15
+          done
+          if [ "$ok" != "1" ]; then echo "Supabase did not return 200"; exit 1; fi
+          echo "Supabase is awake."
+
+      - name: Monthly heartbeat commit (keeps this schedule enabled)
+        run: |
+          if [ "$(date -u +%d)" = "01" ]; then
+            date -u > .keepalive
+            git config user.name "keepalive-bot"
+            git config user.email "actions@users.noreply.github.com"
+            git add .keepalive
+            git commit -m "chore: monthly keepalive heartbeat" || { echo "nothing to commit"; exit 0; }
+            git push || echo "push skipped"
+          else
+            echo "Not the 1st of the month - no heartbeat commit needed today."
+          fi
