@@ -223,7 +223,7 @@ function teacherCard(t){
   const coPay = coStudents.reduce((a,s)=>a+Number(s.co_teacher_fee||0),0);
   return `<div class="card listitem" onclick="openTeacher('${t.id}')">
     <div class="row">
-      <div class="avatar" style="background:linear-gradient(135deg,#8b5cf6,#ec4899)">${esc(initials(t.name))}</div>
+      <div class="avatar" style="background:linear-gradient(135deg,var(--teal),var(--teal2))">${esc(initials(t.name))}</div>
       <div class="grow">
         <div class="row" style="justify-content:space-between">
           <div style="font-weight:700" class="ellipsis">${esc(t.name)}</div>
@@ -356,7 +356,7 @@ async function shareReceiptPDF(studentId,payId){
   const ctor=(window.jspdf&&window.jspdf.jsPDF)||window.jsPDF;
   if(!ctor){ toast("Receipt tool still loading — try again in a moment"); return; }
   const W=384, doc=new ctor({unit:"pt",format:[W,540]});
-  doc.setFillColor(99,102,241); doc.rect(0,0,W,96,"F");
+  doc.setFillColor(29,78,216); doc.rect(0,0,W,96,"F");
   doc.setTextColor(255,255,255);
   doc.setFont("helvetica","bold"); doc.setFontSize(19); doc.text(CFG.ACADEMY_NAME||"Academy",24,42);
   doc.setFont("helvetica","normal"); doc.setFontSize(11); doc.text("Payment Receipt",24,64);
@@ -793,7 +793,7 @@ async function startApp(){
   el("appHeader").classList.remove("hidden");
   el("tabs").classList.remove("hidden");
   el("hdrName").textContent=CFG.ACADEMY_NAME||"Toppers Hub Academy";
-  app().innerHTML=`<div class="empty" style="padding-top:60px"><div class="big">⏳</div>Loading…</div>`;
+  app().innerHTML=`<div class="empty" style="padding-top:70px"><div class="spinner"></div>Loading…</div>`;
   try{ await loadAll(); }catch(e){ app().innerHTML=`<div class="empty"><div class="big">⚠️</div>${esc(e.message||"Failed to load data")}</div>`; return; }
   STATE.view="dashboard"; render();
 }
