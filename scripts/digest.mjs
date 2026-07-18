@@ -6,8 +6,10 @@ const RESEND_KEY = process.env.RESEND_API_KEY;
 const TO = process.env.DIGEST_TO || "mridulnanda2004@gmail.com";
 const CUR = "₹";
 
-if (!SB_KEY) { console.error("Missing SUPABASE_SERVICE_KEY secret"); process.exit(1); }
-if (!RESEND_KEY) { console.log("No RESEND_API_KEY set yet - skipping email. Add the secret to enable sending."); process.exit(0); }
+if (!SB_KEY || !RESEND_KEY) {
+  console.log("Digest not configured yet (need SUPABASE_SERVICE_KEY and RESEND_API_KEY secrets). Skipping - this is not an error.");
+  process.exit(0);
+}
 
 const iso = (d) => d.toISOString().slice(0, 10);
 const today = new Date();
