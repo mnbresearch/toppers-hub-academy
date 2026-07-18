@@ -1,5 +1,5 @@
 /* Toppers Hub Academy — service worker (offline support) */
-const CACHE = "toppershub-v3";
+const CACHE = "toppershub-v4";
 const ASSETS = [
   "./",
   "./index.html",

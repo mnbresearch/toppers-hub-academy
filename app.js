@@ -356,6 +356,7 @@ async function shareReceiptPDF(studentId,payId){
   const ctor=(window.jspdf&&window.jspdf.jsPDF)||window.jsPDF;
   if(!ctor){ toast("Receipt tool still loading — try again in a moment"); return; }
   const W=384, doc=new ctor({unit:"pt",format:[W,540]});
+  const rsAmt=(n)=>"Rs "+Number(n||0).toLocaleString("en-IN"); // jsPDF Helvetica has no rupee glyph
   doc.setFillColor(29,78,216); doc.rect(0,0,W,96,"F");
   doc.setTextColor(255,255,255);
   doc.setFont("helvetica","bold"); doc.setFontSize(19); doc.text(CFG.ACADEMY_NAME||"Academy",24,42);
@@ -363,7 +364,7 @@ async function shareReceiptPDF(studentId,payId){
   if(CFG.ACADEMY_CONTACT){ doc.setFontSize(9); doc.text(String(CFG.ACADEMY_CONTACT),24,82); }
   doc.setFontSize(11); doc.setTextColor(120,120,130); doc.text("Amount received",24,138);
   doc.setTextColor(34,150,90); doc.setFont("helvetica","bold"); doc.setFontSize(30);
-  doc.text(money(p.amount),24,172);
+  doc.text(rsAmt(p.amount),24,172);
   let y=214; doc.setFontSize(11);
   const row=(k,v)=>{ doc.setTextColor(120,120,130); doc.setFont("helvetica","normal"); doc.text(k,24,y);
     doc.setTextColor(17,24,39); doc.setFont("helvetica","bold"); doc.text(String(v),W-24,y,{align:"right"});
@@ -372,7 +373,7 @@ async function shareReceiptPDF(studentId,payId){
   row("Date", fmtDate(p.paid_on));
   row("Method", p.method||"Cash");
   if(p.for_month) row("For", p.for_month);
-  row("Monthly fee", money(s.monthly_fee));
+  row("Monthly fee", rsAmt(s.monthly_fee));
   if(s.next_due_date) row("Next due", fmtDate(s.next_due_date));
   doc.setTextColor(120,120,130); doc.setFont("helvetica","normal"); doc.setFontSize(10);
   doc.text("Thank you! Please keep this as proof of payment.",24,y+8);
