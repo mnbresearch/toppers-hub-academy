@@ -80,29 +80,38 @@ function dueInfo(s){
 }
 function teacherName(id){ const t=DB.teachers.find(x=>x.id===id); return t?t.name:"—"; }
 
-/* ---------------- message templates ---------------- */
+/* ---------------- message templates (addressed to the parent) ---------------- */
+const ACAD = () => CFG.ACADEMY_NAME || "the academy";
+// Greets the guardian by name when we know it, otherwise stays polite and generic.
+function greet(s){ return s.guardian_name ? `Dear ${s.guardian_name},` : "Hello 👋"; }
+function signOff(){ return CFG.ACADEMY_CONTACT ? `\n\n— ${ACAD()}\n${CFG.ACADEMY_CONTACT}` : `\n\n— ${ACAD()}`; }
+// Parent messages go to the guardian's number first, falling back to the student's.
+function parentPhone(s){ return s.guardian_phone || s.phone || ""; }
+
 function msgFeeReminder(s){
-  const nm=CFG.ACADEMY_NAME||"the academy";
-  const c=CFG.ACADEMY_CONTACT?("\n\nReply here or call "+CFG.ACADEMY_CONTACT+"."):"";
-  return `Hello 👋\n\nThis is a gentle reminder from ${nm}. The monthly fee of ${money(s.monthly_fee)} for ${s.name} is due on ${fmtDate(s.next_due_date)}.\n\nKindly arrange the payment at your convenience. Thank you for being part of ${nm}! 🙏${c}`;
+  return `${greet(s)}\n\nThis is a gentle reminder that the monthly fee of ${money(s.monthly_fee)} for ${s.name} is due on ${fmtDate(s.next_due_date)}.\n\nKindly arrange the payment at your convenience. Thank you for being part of ${ACAD()}! 🙏${signOff()}`;
+}
+function msgDueToday(s){
+  return `${greet(s)}\n\nA quick reminder that ${s.name}'s monthly fee of ${money(s.monthly_fee)} is due today (${fmtDate(s.next_due_date)}).\n\nKindly arrange the payment when you can. Thank you! 🙏${signOff()}`;
 }
 function msgOverdue(s){
-  const nm=CFG.ACADEMY_NAME||"the academy";
-  const c=CFG.ACADEMY_CONTACT?("\n\nFor any help, contact "+CFG.ACADEMY_CONTACT+"."):"";
   const od=Math.abs(daysUntil(s.next_due_date)||0);
-  return `Hello 👋\n\nA quick note from ${nm}: the monthly fee of ${money(s.monthly_fee)} for ${s.name} was due on ${fmtDate(s.next_due_date)} (${od} day${od===1?"":"s"} ago).\n\nPlease clear it soon so classes continue without interruption. Thank you! 🙏${c}`;
+  return `${greet(s)}\n\nThe monthly fee of ${money(s.monthly_fee)} for ${s.name} was due on ${fmtDate(s.next_due_date)} — that's ${od} day${od===1?"":"s"} ago.\n\nPlease clear it soon so ${s.name}'s classes continue without interruption. If you've already paid, kindly ignore this message. Thank you! 🙏${signOff()}`;
 }
 function msgWelcome(s){
-  const nm=CFG.ACADEMY_NAME||"the academy";
-  return `Welcome to ${nm}! 🎉\n\nWe're glad to have ${s.name} join us on the ${s.plan_name||"Monthly"} plan (${money(s.monthly_fee)}/month). The first fee is due on ${fmtDate(s.next_due_date)}.\n\nLooking forward to a great journey ahead! 📚`;
+  return `${greet(s)}\n\nWelcome to ${ACAD()}! 🎉 We're glad to have ${s.name} join us on the ${s.plan_name||"Monthly"} plan (${money(s.monthly_fee)}/month). The first fee is due on ${fmtDate(s.next_due_date)}.\n\nLooking forward to a great journey ahead! 📚${signOff()}`;
 }
 function msgRenewal(s){
-  const nm=CFG.ACADEMY_NAME||"the academy";
-  return `Hi! ✨\n\n${s.name}'s plan at ${nm} is up for renewal. The next month's fee of ${money(s.monthly_fee)} is due on ${fmtDate(s.next_due_date)}. Kindly renew to keep the classes going. Thank you! 🙏`;
+  return `${greet(s)}\n\n${s.name}'s plan at ${ACAD()} is up for renewal. The next month's fee of ${money(s.monthly_fee)} is due on ${fmtDate(s.next_due_date)}.\n\nKindly renew to keep the classes going. Thank you! 🙏${signOff()}`;
 }
 function msgReceipt(s,p){
-  const nm=CFG.ACADEMY_NAME||"the academy";
-  return `Payment received ✅\n\n${nm} confirms ${money(p.amount)} received from ${s.name} on ${fmtDate(p.paid_on)}${p.for_month?(" for "+p.for_month):""} via ${p.method||"Cash"}.\n\nNext fee due: ${fmtDate(s.next_due_date)}. Thank you! 🙏`;
+  return `${greet(s)}\n\nPayment received ✅\n\nWe confirm ${money(p.amount)} received for ${s.name} on ${fmtDate(p.paid_on)}${p.for_month?(" for "+p.for_month):""} via ${p.method||"Cash"}.\n\nNext fee due: ${fmtDate(s.next_due_date)}. Thank you! 🙏${signOff()}`;
+}
+function msgAbsent(s,date){
+  return `${greet(s)}\n\nWe noticed ${s.name} was absent from class on ${fmtDate(date||todayISO())}.\n\nWe hope everything is alright. Please let us know if ${s.name} needs any help catching up. 📚${signOff()}`;
+}
+function msgCustom(s){
+  return `${greet(s)}\n\n(Type your message about ${s.name} here.)${signOff()}`;
 }
 
 /* ---------------- outbound actions ---------------- */
@@ -162,7 +171,9 @@ function renderDashboard(){
         <button class="btn ghost sm" onclick="STATE.view='students';render()">🎓 All students</button>
         <button class="btn ghost sm" onclick="openTeacherForm()">👩‍🏫 Add teacher</button>
         <button class="btn ghost sm" onclick="STATE.view='money';render()">💰 Money</button>
-        ${overdue.length?`<button class="btn wa sm" onclick="remindAll()">💬 Remind all overdue (${overdue.length})</button>`:""}
+        ${(overdue.length+dueSoon.length)
+          ? `<button class="btn wa sm" onclick="openReminders()">🔔 Send reminders (${overdue.length+dueSoon.length})</button>`
+          : `<button class="btn ghost sm" onclick="openReminders()">🔔 Reminders</button>`}
       </div>
     </div>
    </div>`;
@@ -339,7 +350,10 @@ function renderAttendance(){
           <div class="grow" style="min-width:0"><div class="ellipsis" style="font-weight:700">${esc(s.name)}</div>
           <div class="muted ellipsis" style="font-size:11px">${esc(s.grade||teacherName(s.teacher_id)||"")}</div></div>
         </div>
-        <div class="row" style="gap:5px;flex:none">${b("P","Present","att-p")}${b("L","Late","att-l")}${b("A","Absent","att-a")}</div>
+        <div class="row" style="gap:5px;flex:none">${b("P","Present","att-p")}${b("L","Late","att-l")}${b("A","Absent","att-a")}${
+          st==="Absent"&&digits(parentPhone(s))
+            ? `<button class="btn wa sm" style="flex:none;margin-left:3px" title="Tell parent" onclick="openWA('${esc(parentPhone(s))}',msgAbsent(DB.students.find(x=>x.id==='${s.id}'),'${date}'))">💬</button>`
+            : ""}</div>
       </div>`;
     }).join("") : `<div class="card empty"><div class="big">📋</div>Add students first, then take attendance here.</div>`}
     <div class="muted center" style="font-size:11.5px;margin-top:6px">Tap P / L / A to mark. Tap the same button again to clear.</div>
@@ -426,8 +440,9 @@ function openStudent(id){
       ${s.grade?`<div class="kv"><span>Class</span><b>${esc(s.grade)}</b></div>`:""}
       <div class="kv"><span>Status</span><b>${esc(s.status)}</b></div>
       ${(()=>{const a=attStats(s.id);return a.total?`<div class="kv"><span>Attendance</span><b>${a.pct}% <span class="tag">(${a.present}/${a.total})</span></b></div>`:"";})()}
-      ${s.phone?`<div class="kv"><span>Phone</span><b>${esc(s.phone)}</b></div>`:""}
-      ${s.guardian_phone?`<div class="kv"><span>Guardian</span><b>${esc(s.guardian_phone)}</b></div>`:""}
+      ${s.guardian_name?`<div class="kv"><span>Parent</span><b>${esc(s.guardian_name)}</b></div>`:""}
+      ${s.guardian_phone?`<div class="kv"><span>Parent phone</span><b>${esc(s.guardian_phone)}</b></div>`:""}
+      ${s.phone?`<div class="kv"><span>Student phone</span><b>${esc(s.phone)}</b></div>`:""}
       ${s.notes?`<div class="kv"><span>Notes</span><b style="max-width:60%;text-align:right">${esc(s.notes)}</b></div>`:""}
     </div>
 
@@ -453,26 +468,31 @@ function openStudent(id){
 function openMessages(id){
   const s=DB.students.find(x=>x.id===id); if(!s) return;
   const i=dueInfo(s);
-  const suggested = i.key==="overdue" ? "overdue" : "reminder";
+  const suggested = i.key==="overdue" ? "overdue" : (i.key==="today" ? "dueToday" : "reminder");
   const templates = {
     reminder:{label:"Fee reminder",fn:msgFeeReminder},
+    dueToday:{label:"Due today",fn:msgDueToday},
     overdue:{label:"Overdue notice",fn:msgOverdue},
     renewal:{label:"Renewal reminder",fn:msgRenewal},
+    absent:{label:"Absent today",fn:(x)=>msgAbsent(x,todayISO())},
     welcome:{label:"Welcome message",fn:msgWelcome},
+    custom:{label:"Custom message",fn:msgCustom},
   };
   const opts = Object.entries(templates).map(([k,v])=>`<option value="${k}" ${k===suggested?"selected":""}>${v.label}</option>`).join("");
   const first = templates[suggested].fn(s);
-  const to = s.phone||s.guardian_phone||"";
+  const gname = s.guardian_name ? esc(s.guardian_name) : "Parent";
   openSheet(`
     <div class="sheettop"><h3>Message · ${esc(s.name)}</h3><button class="iconbtn" style="background:var(--card2)" onclick="closeSheet()">✕</button></div>
+    ${s.guardian_name?`<div class="muted" style="margin:0 2px 8px;font-size:12.5px">Addressed to <b>${gname}</b> (${esc(s.name)}'s parent)</div>`
+      :`<div class="banner">💡 Add a <b>parent's name</b> in Edit student and messages will greet them personally.</div>`}
     <label class="f">Choose a message</label>
     <select class="in" id="msgType" onchange="_refreshMsg('${s.id}')">${opts}</select>
     <label class="f">Preview (you can edit before sending)</label>
     <textarea class="in" id="msgBox" style="min-height:150px">${esc(first)}</textarea>
     <label class="f">Send to</label>
     <select class="in" id="msgTo">
+      ${s.guardian_phone?`<option value="${esc(s.guardian_phone)}">Parent — ${esc(s.guardian_phone)}</option>`:""}
       ${s.phone?`<option value="${esc(s.phone)}">Student — ${esc(s.phone)}</option>`:""}
-      ${s.guardian_phone?`<option value="${esc(s.guardian_phone)}">Guardian — ${esc(s.guardian_phone)}</option>`:""}
       ${(!s.phone&&!s.guardian_phone)?`<option value="">No number saved</option>`:""}
     </select>
     <div style="height:14px"></div>
@@ -484,7 +504,8 @@ function openMessages(id){
   `);
 }
 window._refreshMsg=function(id){ const s=DB.students.find(x=>x.id===id); const k=el("msgType").value;
-  const map={reminder:msgFeeReminder,overdue:msgOverdue,renewal:msgRenewal,welcome:msgWelcome};
+  const map={reminder:msgFeeReminder,dueToday:msgDueToday,overdue:msgOverdue,renewal:msgRenewal,
+             absent:(x)=>msgAbsent(x,todayISO()),welcome:msgWelcome,custom:msgCustom};
   el("msgBox").value=map[k](s); };
 window._send=function(how,id){ const s=DB.students.find(x=>x.id===id); const text=el("msgBox").value;
   const to=el("msgTo").value;
@@ -496,12 +517,60 @@ window._send=function(how,id){ const s=DB.students.find(x=>x.id===id); const tex
 function remindAll(){
   const overdue=DB.students.filter(s=>s.status==="Active"&&dueInfo(s).key==="overdue");
   if(!overdue.length){ toast("No overdue students"); return; }
-  const rows=overdue.map(s=>{ const to=s.phone||s.guardian_phone; return `<div class="card row" style="justify-content:space-between">
-     <div class="grow"><div style="font-weight:700">${esc(s.name)}</div><div class="muted" style="font-size:12px">${money(s.monthly_fee)} · due ${fmtShort(s.next_due_date)}</div></div>
-     <button class="btn wa sm" onclick="openWA('${esc(to)}',msgOverdue(DB.students.find(x=>x.id==='${s.id}')))">💬</button>
-   </div>`; }).join("");
-  openSheet(`<div class="sheettop"><h3>Remind overdue (${overdue.length})</h3><button class="iconbtn" style="background:var(--card2)" onclick="closeSheet()">✕</button></div>
-    <div class="muted" style="margin:0 2px 12px;font-size:13px">Tap 💬 to open each WhatsApp reminder.</div>${rows}`);
+  openReminders();
+}
+
+/* ---------- Reminders hub: one-tap WhatsApp to each parent ---------- */
+window._remind=function(id,kind){
+  const s=DB.students.find(x=>x.id===id); if(!s) return;
+  const to=parentPhone(s);
+  if(!digits(to)){ toast(`No phone saved for ${s.name}`); return; }
+  const fn = kind==="overdue"?msgOverdue : kind==="today"?msgDueToday : msgFeeReminder;
+  openWA(to, fn(s));
+  // remember who we've already messaged today, so the list shows progress
+  const key="th_reminded_"+todayISO();
+  let done=[]; try{ done=JSON.parse(localStorage.getItem(key)||"[]"); }catch(e){}
+  if(!done.includes(id)){ done.push(id); localStorage.setItem(key,JSON.stringify(done)); }
+  setTimeout(()=>{ if(el("remHub")) openReminders(); },600);
+};
+function remindedToday(){ try{ return JSON.parse(localStorage.getItem("th_reminded_"+todayISO())||"[]"); }catch(e){ return []; } }
+
+function openReminders(){
+  const active=DB.students.filter(s=>s.status==="Active");
+  const done=remindedToday();
+  const groups=[
+    {key:"overdue", title:"Overdue",  cls:"b-red",   list:active.filter(s=>dueInfo(s).key==="overdue")},
+    {key:"today",   title:"Due today",cls:"b-amber", list:active.filter(s=>dueInfo(s).key==="today")},
+    {key:"soon",    title:"Due soon", cls:"b-amber", list:active.filter(s=>dueInfo(s).key==="soon")},
+  ];
+  const total=groups.reduce((a,g)=>a+g.list.length,0);
+  const section=(g)=>{
+    if(!g.list.length) return "";
+    return `<h2 class="section">${g.title} (${g.list.length})</h2>` + g.list.map(s=>{
+      const sent=done.includes(s.id);
+      const who=s.guardian_name?esc(s.guardian_name):(s.guardian_phone?"Parent":"No parent name");
+      const hasPhone=!!digits(parentPhone(s));
+      return `<div class="card row" style="justify-content:space-between;gap:10px">
+        <div class="row grow" style="gap:10px;min-width:0">
+          <div class="avatar" style="width:38px;height:38px;font-size:14px">${esc(initials(s.name))}</div>
+          <div class="grow" style="min-width:0">
+            <div class="ellipsis" style="font-weight:700">${esc(s.name)}</div>
+            <div class="muted ellipsis" style="font-size:11.5px">${money(s.monthly_fee)} · due ${fmtShort(s.next_due_date)} · to ${who}</div>
+          </div>
+        </div>
+        ${hasPhone
+          ? `<button class="btn ${sent?"ghost":"wa"} sm" style="flex:none" onclick="_remind('${s.id}','${g.key}')">${sent?"✓ Sent":"💬 Remind"}</button>`
+          : `<button class="btn ghost sm" style="flex:none;opacity:.6" onclick="openStudentForm('${s.id}')">Add phone</button>`}
+      </div>`;
+    }).join("");
+  };
+  openSheet(`
+    <div class="sheettop" id="remHub"><h3>🔔 Fee reminders</h3><button class="iconbtn" onclick="closeSheet()">✕</button></div>
+    ${total
+      ? `<div class="muted" style="margin:0 2px 10px;font-size:12.5px">Tap <b>Remind</b> to open WhatsApp with a message already written for that parent. ${done.length?`<br><b>${done.length}</b> sent today.`:""}</div>`
+      : `<div class="card empty"><div class="big">✅</div>Nothing due right now — all caught up!</div>`}
+    ${groups.map(section).join("")}
+  `);
 }
 
 /* ---------- Teacher detail ---------- */
@@ -597,9 +666,11 @@ function openStudentForm(id){
       <div><label class="f">Co-teacher</label><select class="in" id="sCo">${teacherOptions(s.co_teacher_id)}</select></div>
       <div><label class="f">Co-teacher fee (${CUR})</label><input class="in" id="sCoFee" type="number" inputmode="numeric" value="${esc(s.co_teacher_fee||"")}" placeholder="0"/></div>
     </div>
+    <label class="f">Parent / guardian name <span class="tag">— used to greet them in WhatsApp messages</span></label>
+    <input class="in" id="sGuardianName" value="${esc(s.guardian_name||"")}" placeholder="e.g. Mrs. Sunita Gupta"/>
     <div class="two">
+      <div><label class="f">Parent phone (WhatsApp)</label><input class="in" id="sGuardian" value="${esc(s.guardian_phone||"")}" placeholder="+91…"/></div>
       <div><label class="f">Student phone</label><input class="in" id="sPhone" value="${esc(s.phone||"")}" placeholder="+91…"/></div>
-      <div><label class="f">Guardian phone</label><input class="in" id="sGuardian" value="${esc(s.guardian_phone||"")}" placeholder="+91…"/></div>
     </div>
     <label class="f">Email (for email reminders)</label><input class="in" id="sEmail" value="${esc(s.email||"")}" placeholder="optional"/>
     <label class="f">Notes</label><textarea class="in" id="sNotes" placeholder="optional">${esc(s.notes||"")}</textarea>
@@ -615,12 +686,21 @@ async function saveStudent(id){
     name, monthly_fee:fee, grade:val("sGrade"), plan_name:val("sPlan")||"Monthly", status:val("sStatus"),
     join_date:val("sJoin")||todayISO(), next_due_date:val("sDue")||null,
     teacher_id:val("sTeacher")||null, co_teacher_id:val("sCo")||null, co_teacher_fee:Number(val("sCoFee")||0),
-    phone:val("sPhone"), guardian_phone:val("sGuardian"), email:val("sEmail"), notes:val("sNotes")
+    phone:val("sPhone"), guardian_phone:val("sGuardian"), guardian_name:val("sGuardianName"),
+    email:val("sEmail"), notes:val("sNotes")
   };
+  const save=(r)=> id ? api.update("students",id,r) : api.insert("students",r);
   try{
     let saved;
-    if(id){ saved=await api.update("students",id,row); }
-    else { saved=await api.insert("students",row); }
+    try{ saved=await save(row); }
+    catch(err){
+      // Graceful fallback if the guardian_name column hasn't been added to the database yet
+      if(String((err&&(err.message||err))||"").toLowerCase().includes("guardian_name")){
+        const rest={...row}; delete rest.guardian_name;
+        saved=await save(rest);
+        toast("Saved — add the guardian_name column to store parent names");
+      } else throw err;
+    }
     await loadAll(); closeSheet(); render();
     toast(id?"Student updated ✓":"Student added ✓");
     if(!id && (saved&&(saved.phone||saved.guardian_phone))){ setTimeout(()=>askWelcome(saved.id),300); }
@@ -721,6 +801,8 @@ el("menuBtn").addEventListener("click",()=>{
     </div>
     <button class="btn primary block" onclick="closeSheet();doInstall()">📲 Install app on this device</button>
     <div style="height:8px"></div>
+    <button class="btn ghost block" onclick="toggleNotifications()">${notifyOn()?"🔕 Turn off fee alerts":"🔔 Turn on fee alerts"}</button>
+    <div class="muted" style="font-size:11.5px;margin:6px 2px 10px">Shows a phone alert once a day when fees are due or overdue (while the app is installed).</div>
     <button class="btn ghost block" onclick="exportData()">⬇️ Export backup (JSON)</button>
     <div style="height:8px"></div>
     ${CLOUD?`<button class="btn ghost block" onclick="signOut()">🚪 Log out</button>`
@@ -731,6 +813,48 @@ function exportData(){
   const blob=new Blob([JSON.stringify({exported:new Date().toISOString(),...DB},null,2)],{type:"application/json"});
   const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="toppers-hub-backup-"+todayISO()+".json"; a.click();
   toast("Backup downloaded ✓");
+}
+
+/* ============================================================
+   FEE ALERTS  (device notifications)
+   Fires a summary alert when the app is opened and fees need attention.
+   Once per day, so it never nags.
+   ============================================================ */
+function notifyOn(){ return localStorage.getItem("th_notify")==="1"; }
+function notifySupported(){ return typeof Notification !== "undefined"; }
+async function toggleNotifications(){
+  if(!notifySupported()){ toast("This browser doesn't support alerts"); return; }
+  if(notifyOn()){ localStorage.setItem("th_notify","0"); toast("Fee alerts turned off"); closeSheet(); return; }
+  let perm = Notification.permission;
+  if(perm !== "granted") perm = await Notification.requestPermission();
+  if(perm === "granted"){
+    localStorage.setItem("th_notify","1");
+    localStorage.removeItem("th_notify_last");
+    toast("Fee alerts on ✓");
+    closeSheet();
+    notifyDues(true);
+  } else {
+    toast("Alerts are blocked in your browser settings");
+  }
+}
+function notifyDues(force){
+  if(!notifyOn() || !notifySupported() || Notification.permission!=="granted") return;
+  const today=todayISO();
+  if(!force && localStorage.getItem("th_notify_last")===today) return; // once a day
+  const active=DB.students.filter(s=>s.status==="Active");
+  const overdue=active.filter(s=>dueInfo(s).key==="overdue").length;
+  const dueToday=active.filter(s=>dueInfo(s).key==="today").length;
+  const soon=active.filter(s=>dueInfo(s).key==="soon").length;
+  if(!overdue && !dueToday && !soon) return;
+  const urgent=overdue+dueToday;
+  const title = urgent ? `${urgent} fee${urgent===1?"":"s"} need attention` : `${soon} fee${soon===1?"":"s"} due soon`;
+  const body = [overdue?`${overdue} overdue`:null, dueToday?`${dueToday} due today`:null, soon?`${soon} due in a few days`:null]
+                 .filter(Boolean).join(" · ") + " — tap to open reminders";
+  try{
+    const n=new Notification(title,{ body, icon:"icon-192.png", badge:"icon-192.png", tag:"th-dues", renotify:false });
+    n.onclick=()=>{ window.focus(); openReminders(); n.close(); };
+    localStorage.setItem("th_notify_last",today);
+  }catch(e){}
 }
 
 /* ============================================================
@@ -797,6 +921,7 @@ async function startApp(){
   app().innerHTML=`<div class="empty" style="padding-top:70px"><div class="spinner"></div>Loading…</div>`;
   try{ await loadAll(); }catch(e){ app().innerHTML=`<div class="empty"><div class="big">⚠️</div>${esc(e.message||"Failed to load data")}</div>`; return; }
   STATE.view="dashboard"; render();
+  setTimeout(()=>notifyDues(false), 1200);   // daily fee alert, once per day
 }
 
 (async function boot(){
