@@ -6,6 +6,7 @@
    ============================================================ */
 "use strict";
 
+const APP_VERSION = "2026-07-19-2";   // bump on every deploy — must match version.json
 const CFG = window.APP_CONFIG || {};
 const CUR = CFG.CURRENCY || "₹";
 const DUE_SOON = Number(CFG.DUE_SOON_DAYS || 5);
@@ -658,8 +659,9 @@ function openStudentForm(id){
         ${["Active","Paused","Left"].map(x=>`<option ${s.status===x?"selected":""}>${x}</option>`).join("")}</select></div>
     </div>
     <div class="two">
-      <div><label class="f">Join date</label><input class="in" id="sJoin" type="date" value="${esc(s.join_date||todayISO())}"/></div>
-      <div><label class="f">Next fee due *</label><input class="in" id="sDue" type="date" value="${esc(s.next_due_date||"")}"/></div>
+      <div><label class="f">Start date</label><input class="in" id="sJoin" type="date" value="${esc(s.join_date||todayISO())}" onchange="_syncDue()"/></div>
+      <div><label class="f">Next fee due *</label><input class="in" id="sDue" type="date" value="${esc(s.next_due_date||"")}"/>
+        <div class="tag" style="margin-top:4px">Auto-set to 1 month after the start date. You can still change it.</div></div>
     </div>
     <label class="f">Teacher</label><select class="in" id="sTeacher">${teacherOptions(s.teacher_id)}</select>
     <div class="two">
@@ -679,6 +681,8 @@ function openStudentForm(id){
     <button class="btn primary block" onclick="saveStudent('${id||""}')">${id?"Save changes":"Add student"}</button>
   `);
 }
+// Keep "Next fee due" one month after the chosen start date (still editable afterwards)
+window._syncDue=function(){ const j=el("sJoin"); const d=el("sDue"); if(j&&d&&j.value) d.value=addMonthsISO(j.value,1); };
 async function saveStudent(id){
   const name=val("sName"); if(!name){ toast("Name is required"); return; }
   const fee=Number(val("sFee")||0);
@@ -910,6 +914,38 @@ if(isStandalone()) el("installBtn").classList.add("hidden");
 if(isIOS() && !isStandalone()) el("installBtn").classList.remove("hidden");
 
 /* ============================================================
+   AUTO-UPDATE  (force installed apps onto the latest version)
+   Polls version.json; if it differs from the running build, the app
+   refreshes the service worker cache and reloads to the new code.
+   ============================================================ */
+let _updating=false;
+async function checkForUpdate(){
+  if(_updating) return;
+  try{
+    const r = await fetch("version.json?t="+Date.now(), { cache:"no-store" });
+    if(!r.ok) return;
+    const data = await r.json();
+    const v = data && data.version;
+    if(!v || v===APP_VERSION) return;
+    if(sessionStorage.getItem("th_updated_to")===v) return; // guard against reload loops
+    sessionStorage.setItem("th_updated_to", v);
+    _updating=true;
+    toast("Updating to the latest version…");
+    try{
+      if("serviceWorker" in navigator){
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map(reg => reg.update().catch(()=>{})));
+      }
+      if(window.caches){ const keys=await caches.keys(); await Promise.all(keys.map(k=>caches.delete(k))); }
+    }catch(e){}
+    setTimeout(()=>location.reload(), 700);
+  }catch(e){}
+}
+document.addEventListener("visibilitychange", ()=>{ if(!document.hidden) checkForUpdate(); });
+window.addEventListener("focus", checkForUpdate);
+setInterval(checkForUpdate, 3*60*1000);   // every 3 minutes while open
+
+/* ============================================================
    BOOT
    ============================================================ */
 document.querySelectorAll("nav.tabs button").forEach(b=>b.addEventListener("click",()=>{ STATE.view=b.dataset.view; STATE.search=""; window.scrollTo(0,0); render(); }));
@@ -922,9 +958,11 @@ async function startApp(){
   try{ await loadAll(); }catch(e){ app().innerHTML=`<div class="empty"><div class="big">⚠️</div>${esc(e.message||"Failed to load data")}</div>`; return; }
   STATE.view="dashboard"; render();
   setTimeout(()=>notifyDues(false), 1200);   // daily fee alert, once per day
+  checkForUpdate();                          // pull the latest build if one was pushed
 }
 
 (async function boot(){
+  checkForUpdate();   // check for a newer build even before login
   if(!CLOUD){ await startApp(); return; }
   if(!sb){ app().innerHTML=`<div class="empty"><div class="big">⚠️</div>Supabase library did not load. Check your internet and refresh.</div>`; el("appHeader").classList.remove("hidden"); return; }
   const { data:{ session } } = await sb.auth.getSession();

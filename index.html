@@ -240,7 +240,21 @@
   <script src="app.js"></script>
   <script>
     if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(()=>{}));
+      // Reload once when a new service worker takes control (forces the new build in).
+      let _reloaded = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (_reloaded) return; _reloaded = true; location.reload();
+      });
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js').then((reg) => {
+          // Check for a new service worker on load, when the app regains focus, and periodically.
+          const check = () => reg.update().catch(()=>{});
+          check();
+          window.addEventListener('focus', check);
+          document.addEventListener('visibilitychange', () => { if (!document.hidden) check(); });
+          setInterval(check, 3 * 60 * 1000);
+        }).catch(()=>{});
+      });
     }
   </script>
 </body>

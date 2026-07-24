@@ -1,6 +1,12 @@
-/* Toppers Hub Academy — service worker (offline support) */
-const CACHE = "toppershub-v5";
-const ASSETS = [
+/* Toppers Hub Academy — service worker
+   Strategy:
+   - App shell (HTML/JS/JSON): NETWORK-FIRST, so every load gets the latest code
+     (with cache fallback when offline). This is what makes forced updates work.
+   - Icons + CDN libraries: CACHE-FIRST (they rarely change), with network fallback.
+   - Supabase API + version.json: NETWORK-ONLY (never served stale).
+*/
+const CACHE = "toppershub-v6";
+const SHELL = [
   "./",
   "./index.html",
   "./app.js",
@@ -13,15 +19,15 @@ const ASSETS = [
 ];
 
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS).catch(() => {})));
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL).catch(() => {})));
   self.skipWaiting();
 });
 
 self.addEventListener("activate", (e) => {
   e.waitUntil(
     caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then(() => self.clients.claim())
   );
-  self.clients.claim();
 });
 
 self.addEventListener("fetch", (e) => {
@@ -29,22 +35,30 @@ self.addEventListener("fetch", (e) => {
   if (req.method !== "GET") return;
   const url = new URL(req.url);
 
-  // Never cache Supabase API calls — always go to the network so data is fresh.
-  if (url.hostname.endsWith("supabase.co")) return;
+  // Never cache Supabase API or the version file — always fresh from network.
+  if (url.hostname.endsWith("supabase.co") || url.pathname.endsWith("version.json")) return;
 
-  // Cache-first for app shell, fall back to network, then cache the response.
-  e.respondWith(
-    caches.match(req).then((cached) => {
-      const fetched = fetch(req)
-        .then((res) => {
-          if (res && res.status === 200 && (url.origin === location.origin || url.hostname === "cdn.jsdelivr.net")) {
-            const copy = res.clone();
-            caches.open(CACHE).then((c) => c.put(req, copy));
-          }
-          return res;
-        })
-        .catch(() => cached);
-      return cached || fetched;
-    })
-  );
+  const isCDN = url.hostname === "cdn.jsdelivr.net" || url.hostname === "cdnjs.cloudflare.com";
+  const isIcon = /icon-\d+.*\.png$/.test(url.pathname);
+
+  // Cache-first for icons and CDN libraries (rarely change).
+  if (isIcon || isCDN) {
+    e.respondWith(
+      caches.match(req).then((cached) => cached || fetch(req).then((res) => {
+        if (res && res.status === 200) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)); }
+        return res;
+      }).catch(() => cached))
+    );
+    return;
+  }
+
+  // Network-first for everything same-origin (the app shell) so updates land immediately.
+  if (url.origin === location.origin) {
+    e.respondWith(
+      fetch(req).then((res) => {
+        if (res && res.status === 200) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)); }
+        return res;
+      }).catch(() => caches.match(req).then((cached) => cached || caches.match("./index.html")))
+    );
+  }
 });
