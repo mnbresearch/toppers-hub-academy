@@ -6,7 +6,7 @@
    ============================================================ */
 "use strict";
 
-const APP_VERSION = "2026-07-19-2";   // bump on every deploy — must match version.json
+const APP_VERSION = "2026-07-19-3";   // bump on every deploy — must match version.json
 const CFG = window.APP_CONFIG || {};
 const CUR = CFG.CURRENCY || "₹";
 const DUE_SOON = Number(CFG.DUE_SOON_DAYS || 5);
@@ -199,19 +199,54 @@ function studentRow(s,i,showDue){
 /* ---------- STUDENTS ---------- */
 function renderStudents(){
   el("hdrSub").textContent = "Students";
-  const q=STATE.search.toLowerCase();
+  const q=STATE.search.toLowerCase().trim();
+  const filter=STATE.studentFilter||"all";
+  const sort=STATE.studentSort||"due";
   let list = DB.students.slice();
-  if(q) list=list.filter(s=>(s.name||"").toLowerCase().includes(q)||(s.grade||"").toLowerCase().includes(q)||teacherName(s.teacher_id).toLowerCase().includes(q));
-  list.sort((a,b)=>dueInfo(a).order-dueInfo(b).order || (a.name||"").localeCompare(b.name||""));
+  if(q) list=list.filter(s=>[s.name,s.grade,s.guardian_name,s.phone,s.guardian_phone,teacherName(s.teacher_id)]
+      .some(v=>String(v||"").toLowerCase().includes(q)));
+  // filter chips
+  list=list.filter(s=>{
+    const k=dueInfo(s).key;
+    if(filter==="all") return true;
+    if(filter==="overdue") return k==="overdue";
+    if(filter==="soon") return k==="today"||k==="soon";
+    if(filter==="ok") return k==="ok";
+    if(filter==="paused") return s.status!=="Active";
+    return true;
+  });
+  // sort
+  if(sort==="name") list.sort((a,b)=>(a.name||"").localeCompare(b.name||""));
+  else if(sort==="fee") list.sort((a,b)=>Number(b.monthly_fee||0)-Number(a.monthly_fee||0));
+  else list.sort((a,b)=>dueInfo(a).order-dueInfo(b).order || (a.next_due_date||"").localeCompare(b.next_due_date||""));
+
+  const counts={
+    all:DB.students.length,
+    overdue:DB.students.filter(s=>dueInfo(s).key==="overdue").length,
+    soon:DB.students.filter(s=>["today","soon"].includes(dueInfo(s).key)).length,
+    paused:DB.students.filter(s=>s.status!=="Active").length,
+  };
+  const chip=(k,label)=>`<button class="chip ${filter===k?"chip-on":""}" onclick="STATE.studentFilter='${k}';render()">${label}${counts[k]!=null?` <span class="chip-n">${counts[k]}</span>`:""}</button>`;
+
   app().innerHTML = `
    <div class="view">
-    <div class="row" style="gap:8px;margin-bottom:4px">
-      <input class="search" style="margin:0" placeholder="🔍 Search students…" value="${esc(STATE.search)}" oninput="STATE.search=this.value;render()"/>
+    <div class="row" style="gap:8px;margin-bottom:8px">
+      <input class="search" style="margin:0" placeholder="🔍 Search name, parent, phone…" value="${esc(STATE.search)}" oninput="STATE.search=this.value;render()"/>
       <button class="btn primary" style="flex:none" onclick="openStudentForm()">＋</button>
     </div>
-    <div class="muted" style="font-size:12px;margin:2px 4px 12px">${list.length} student${list.length===1?"":"s"}</div>
+    <div class="chiprow">
+      ${chip("all","All")}${chip("overdue","Overdue")}${chip("soon","Due soon")}${chip("paused","Paused")}
+      <select class="chip chip-sort" onchange="STATE.studentSort=this.value;render()">
+        <option value="due" ${sort==="due"?"selected":""}>Sort: Due date</option>
+        <option value="name" ${sort==="name"?"selected":""}>Sort: Name</option>
+        <option value="fee" ${sort==="fee"?"selected":""}>Sort: Fee (high→low)</option>
+      </select>
+    </div>
+    <div class="muted" style="font-size:12px;margin:2px 4px 12px">${list.length} student${list.length===1?"":"s"}${filter!=="all"?" · filtered":""}</div>
     ${list.length? list.map(s=>studentRow(s)).join("") :
-      `<div class="card empty"><div class="big">🎓</div>No students yet.<br/><button class="btn primary" style="margin-top:12px" onclick="openStudentForm()">＋ Add your first student</button></div>`}
+      (DB.students.length
+        ? `<div class="card empty"><div class="big">🔍</div>No students match this filter.</div>`
+        : `<div class="card empty"><div class="big">🎓</div>No students yet.<br/><button class="btn primary" style="margin-top:12px" onclick="openStudentForm()">＋ Add your first student</button></div>`)}
    </div>`;
 }
 
@@ -262,6 +297,20 @@ function renderMoney(){
   const coPayouts=active.filter(s=>s.co_teacher_id).reduce((a,s)=>a+Number(s.co_teacher_fee||0),0);
   const recent=DB.payments.slice().sort((a,b)=>(b.paid_on||"").localeCompare(a.paid_on||"")||(b.created_at||"").localeCompare(a.created_at||"")).slice(0,15);
 
+  // last 6 months collection
+  const months=[];
+  for(let i=5;i>=0;i--){ const d=new Date(now.getFullYear(),now.getMonth()-i,1); months.push(d); }
+  const monthTotals=months.map(d=>DB.payments.filter(p=>{const pd=parseD(p.paid_on);return pd&&pd.getMonth()===d.getMonth()&&pd.getFullYear()===d.getFullYear();}).reduce((a,p)=>a+Number(p.amount||0),0));
+  const maxMonth=Math.max(1,...monthTotals);
+  const kfmt=(n)=> n>=1000 ? (CUR+(n/1000).toFixed(n>=10000?0:1)+"k") : (n?money(n):"—");
+  // payment method breakdown (this month)
+  const methods={};
+  DB.payments.filter(p=>{const d=parseD(p.paid_on);return d&&d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();})
+    .forEach(p=>{ const m=p.method||"Other"; methods[m]=(methods[m]||0)+Number(p.amount||0); });
+  const methodRows=Object.entries(methods).sort((a,b)=>b[1]-a[1]);
+  // biggest pending (overdue) students
+  const pending=active.filter(s=>dueInfo(s).key==="overdue").sort((a,b)=>Number(b.monthly_fee||0)-Number(a.monthly_fee||0)).slice(0,5);
+
   app().innerHTML=`
    <div class="view">
     <div class="stats">
@@ -270,6 +319,36 @@ function renderMoney(){
       <div class="stat r"><div class="l">Outstanding (overdue)</div><div class="n">${money(outstanding)}</div></div>
       <div class="stat a"><div class="l">Co-teacher payouts</div><div class="n">${money(coPayouts)}</div></div>
     </div>
+
+    <div class="btnrow" style="margin-top:12px">
+      <button class="btn ghost sm grow" onclick="shareMonthReport()">📄 Monthly report (PDF)</button>
+      <button class="btn ghost sm grow" onclick="exportCSV('payments')">⬇️ Payments CSV</button>
+    </div>
+
+    <h2 class="section">Last 6 months collected</h2>
+    <div class="card">
+      <div class="bars">
+        ${months.map((d,i)=>{
+          const h=Math.round((monthTotals[i]/maxMonth)*100);
+          const isNow=i===months.length-1;
+          return `<div class="barcol"><div class="barval">${kfmt(monthTotals[i])}</div>
+            <div class="bartrack"><div class="bar ${isNow?"bar-now":""}" style="height:${Math.max(4,h)}%"></div></div>
+            <div class="barlbl">${MON[d.getMonth()]}</div></div>`;
+        }).join("")}
+      </div>
+    </div>
+
+    ${methodRows.length?`<h2 class="section">This month by method</h2>
+    <div class="card">
+      ${methodRows.map(([m,v])=>`<div class="kv"><span>${esc(m)}</span><b>${money(v)}</b></div>`).join("")}
+    </div>`:""}
+
+    ${pending.length?`<h2 class="section">Biggest pending</h2>
+    ${pending.map(s=>`<div class="card row listitem" onclick="openStudent('${s.id}')" style="justify-content:space-between">
+        <div class="row grow" style="gap:10px;min-width:0"><div class="avatar" style="width:36px;height:36px;font-size:13px">${esc(initials(s.name))}</div>
+        <div class="grow" style="min-width:0"><div class="ellipsis" style="font-weight:700">${esc(s.name)}</div>
+        <div class="muted" style="font-size:11.5px">due ${fmtShort(s.next_due_date)}</div></div></div>
+        <b style="color:var(--red);flex:none">${money(s.monthly_fee)}</b></div>`).join("")}`:""}
 
     <h2 class="section">Teacher payout summary</h2>
     <div class="card">
@@ -807,7 +886,11 @@ el("menuBtn").addEventListener("click",()=>{
     <div style="height:8px"></div>
     <button class="btn ghost block" onclick="toggleNotifications()">${notifyOn()?"🔕 Turn off fee alerts":"🔔 Turn on fee alerts"}</button>
     <div class="muted" style="font-size:11.5px;margin:6px 2px 10px">Shows a phone alert once a day when fees are due or overdue (while the app is installed).</div>
-    <button class="btn ghost block" onclick="exportData()">⬇️ Export backup (JSON)</button>
+    <button class="btn ghost block" onclick="exportCSV('students')">📗 Export students (CSV)</button>
+    <div style="height:8px"></div>
+    <button class="btn ghost block" onclick="exportCSV('payments')">🧾 Export payments (CSV)</button>
+    <div style="height:8px"></div>
+    <button class="btn ghost block" onclick="exportData()">⬇️ Export full backup (JSON)</button>
     <div style="height:8px"></div>
     ${CLOUD?`<button class="btn ghost block" onclick="signOut()">🚪 Log out</button>`
            :`<div class="banner">Add Supabase keys in <b>config.js</b> to enable cloud sync & login. See README.</div>`}
@@ -817,6 +900,76 @@ function exportData(){
   const blob=new Blob([JSON.stringify({exported:new Date().toISOString(),...DB},null,2)],{type:"application/json"});
   const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="toppers-hub-backup-"+todayISO()+".json"; a.click();
   toast("Backup downloaded ✓");
+}
+function _csv(v){ v=String(v==null?"":v); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; }
+function _download(name, text, type){ const blob=new Blob([text],{type:type||"text/csv;charset=utf-8"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=name; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),2000); }
+function exportCSV(kind){
+  let rows, name;
+  if(kind==="payments"){
+    name="payments-"+todayISO()+".csv";
+    rows=[["Student","Amount","Paid on","Method","For month","Note"]];
+    DB.payments.slice().sort((a,b)=>(b.paid_on||"").localeCompare(a.paid_on||"")).forEach(p=>{
+      const s=DB.students.find(x=>x.id===p.student_id);
+      rows.push([s?s.name:"(deleted)", p.amount, p.paid_on, p.method||"", p.for_month||"", p.note||""]);
+    });
+  } else {
+    name="students-"+todayISO()+".csv";
+    rows=[["Name","Class","Parent name","Monthly fee","Plan","Status","Next due","Teacher","Co-teacher","Parent phone","Student phone","Email"]];
+    DB.students.slice().sort((a,b)=>(a.name||"").localeCompare(b.name||"")).forEach(s=>{
+      rows.push([s.name,s.grade||"",s.guardian_name||"",s.monthly_fee,s.plan_name||"",s.status,s.next_due_date||"",
+        teacherName(s.teacher_id),s.co_teacher_id?teacherName(s.co_teacher_id):"",s.guardian_phone||"",s.phone||"",s.email||""]);
+    });
+  }
+  if(rows.length<=1){ toast("Nothing to export yet"); return; }
+  _download(name, rows.map(r=>r.map(_csv).join(",")).join("\n"));
+  toast("CSV downloaded ✓");
+}
+async function shareMonthReport(){
+  const ctor=(window.jspdf&&window.jspdf.jsPDF)||window.jsPDF;
+  if(!ctor){ toast("Report tool still loading — try again"); return; }
+  const rs=(n)=>"Rs "+Number(n||0).toLocaleString("en-IN");
+  const now=new Date();
+  const inMonth=(iso)=>{const d=parseD(iso);return d&&d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();};
+  const active=DB.students.filter(s=>s.status==="Active");
+  const pays=DB.payments.filter(p=>inMonth(p.paid_on)).sort((a,b)=>(a.paid_on||"").localeCompare(b.paid_on||""));
+  const collected=pays.reduce((a,p)=>a+Number(p.amount||0),0);
+  const expected=active.reduce((a,s)=>a+Number(s.monthly_fee||0),0);
+  const overdue=active.filter(s=>dueInfo(s).key==="overdue");
+  const outstanding=overdue.reduce((a,s)=>a+Number(s.monthly_fee||0),0);
+  const W=520, doc=new ctor({unit:"pt",format:[W,760]});
+  doc.setFillColor(29,78,216); doc.rect(0,0,W,80,"F");
+  doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(18);
+  doc.text(CFG.ACADEMY_NAME||"Academy",28,36);
+  doc.setFont("helvetica","normal"); doc.setFontSize(12); doc.text("Monthly report — "+monthKey(now),28,58);
+  let y=112; doc.setTextColor(17,24,39);
+  const stat=(k,v,color)=>{ doc.setFontSize(11); doc.setTextColor(110,110,120); doc.setFont("helvetica","normal"); doc.text(k,28,y);
+    doc.setFont("helvetica","bold"); doc.setFontSize(15); if(color)doc.setTextColor(color[0],color[1],color[2]); else doc.setTextColor(17,24,39);
+    doc.text(v,W-28,y,{align:"right"}); doc.setDrawColor(230,230,236); doc.line(28,y+9,W-28,y+9); y+=34; };
+  stat("Collected this month", rs(collected), [22,140,90]);
+  stat("Expected this month", rs(expected));
+  stat("Outstanding (overdue)", rs(outstanding), [200,40,40]);
+  stat("Active students", String(active.length));
+  stat("Payments recorded", String(pays.length));
+  y+=8; doc.setFont("helvetica","bold"); doc.setFontSize(12); doc.setTextColor(17,24,39); doc.text("Payments this month",28,y); y+=18;
+  doc.setFont("helvetica","normal"); doc.setFontSize(10); doc.setTextColor(60,60,70);
+  if(pays.length){ pays.forEach(p=>{ if(y>720){ doc.addPage([W,760]); y=40; }
+    const s=DB.students.find(x=>x.id===p.student_id);
+    doc.text((s?s.name:"(deleted)")+"  ·  "+fmtShort(p.paid_on)+"  ·  "+(p.method||"Cash"),28,y);
+    doc.text(rs(p.amount),W-28,y,{align:"right"}); y+=16; }); }
+  else { doc.text("No payments recorded yet this month.",28,y); y+=16; }
+  if(overdue.length){ y+=10; if(y>700){ doc.addPage([W,760]); y=40; }
+    doc.setFont("helvetica","bold"); doc.setFontSize(12); doc.setTextColor(200,40,40); doc.text("Overdue ("+overdue.length+")",28,y); y+=18;
+    doc.setFont("helvetica","normal"); doc.setFontSize(10); doc.setTextColor(60,60,70);
+    overdue.forEach(s=>{ if(y>720){ doc.addPage([W,760]); y=40; }
+      doc.text(s.name+"  ·  due "+fmtShort(s.next_due_date),28,y); doc.text(rs(s.monthly_fee),W-28,y,{align:"right"}); y+=16; }); }
+  const fname="Report-"+monthKey(now).replace(/\s+/g,"-")+".pdf";
+  const blob=doc.output("blob"); const file=new File([blob],fname,{type:"application/pdf"});
+  if(navigator.canShare && navigator.canShare({files:[file]})){
+    try{ await navigator.share({files:[file],title:"Monthly report",text:(CFG.ACADEMY_NAME||"Academy")+" — "+monthKey(now)}); return; }catch(e){ if(e&&e.name==="AbortError") return; }
+  }
+  const url=URL.createObjectURL(blob); const a=document.createElement("a"); a.href=url; a.download=fname; a.click(); setTimeout(()=>URL.revokeObjectURL(url),2000);
+  toast("Report saved ✓");
 }
 
 /* ============================================================
