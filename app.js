@@ -6,7 +6,7 @@
    ============================================================ */
 "use strict";
 
-const APP_VERSION = "2026-07-19-3";   // bump on every deploy — must match version.json
+const APP_VERSION = "2026-09-07-1";   // bump on every deploy — must match version.json
 const CFG = window.APP_CONFIG || {};
 const CUR = CFG.CURRENCY || "₹";
 const DUE_SOON = Number(CFG.DUE_SOON_DAYS || 5);
@@ -56,6 +56,47 @@ async function loadAll(){
   try{ DB.attendance = await api.list("attendance"); }catch(e){ DB.attendance = DB.attendance||[]; }
 }
 
+/* ============================================================
+   DOUBLE-TAP GUARD
+
+   THE BUG THIS FIXES.
+
+   Saving anything here is a round trip to Supabase — a second or three on a
+   phone, longer on patchy mobile data. Nothing on screen changed while that was
+   happening: the button looked exactly as it did before it was pressed. So the
+   natural thing to do is press it again.
+
+   Every press started ANOTHER insert. Two taps on "Save payment" wrote two
+   payment rows, and the student's ledger then said they had paid twice — which
+   is the worst possible thing for this app to get wrong, because it is the
+   record you rely on when a parent asks what they owe.
+
+   The fix is two halves, and both matter:
+     1. A re-entry flag, so a second tap cannot start a second save even if the
+        button is somehow still clickable.
+     2. Visible feedback — the button disables itself and says "Saving…" — so
+        there is no reason to tap again in the first place. A guard that works
+        silently still leaves the user believing nothing happened.
+
+   The button is restored only if it is STILL ON SCREEN afterwards. On success
+   these forms close themselves, so restoring would touch a removed element;
+   on failure the form stays up and the button must become usable again.
+   ============================================================ */
+let SAVING = false;
+async function submitOnce(btnId, busyLabel, fn){
+  if (SAVING) return;                       // a second tap while the first is in flight
+  SAVING = true;
+  const btn = el(btnId);
+  const original = btn ? btn.innerHTML : "";
+  if (btn){ btn.disabled = true; btn.innerHTML = busyLabel; }
+  try {
+    await fn();
+  } finally {
+    SAVING = false;
+    if (btn && document.body.contains(btn)){ btn.disabled = false; btn.innerHTML = original; }
+  }
+}
+
 /* ---------------- date + money utils ---------------- */
 const MON=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 function isoOf(d){ const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,"0"), da=String(d.getDate()).padStart(2,"0"); return y+"-"+m+"-"+da; }
@@ -67,6 +108,26 @@ function addMonthsISO(iso,n){ const d=parseD(iso)||new Date(); const day=d.getDa
 function monthKey(d){ d=d||new Date(); return MON[d.getMonth()]+" "+d.getFullYear(); }
 function daysUntil(iso){ const d=parseD(iso); if(!d) return null; const t=new Date(); t.setHours(0,0,0,0); return Math.round((d-t)/86400000); }
 function money(n){ n=Number(n||0); return CUR+n.toLocaleString("en-IN"); }
+
+/*
+  WHEN A PAYMENT WAS ENTERED — which is not the same as when it was paid.
+
+  `paid_on` is what you typed: the day the student handed over the money, and
+  you can backdate it. `created_at` is when the row was actually written, set by
+  the database and never editable. Only the second one can answer "did I enter
+  this twice by accident", so the payment log below shows both and labels them
+  differently on purpose.
+
+  Shown in the phone's own timezone, in 12-hour form, because this is read by
+  someone checking their memory of an afternoon — not by a developer.
+*/
+function fmtDateTime(iso){
+  if(!iso) return "—";
+  const d=new Date(iso); if(isNaN(d)) return "—";
+  let h=d.getHours(); const ampm=h<12?"am":"pm"; h=h%12||12;
+  const mm=String(d.getMinutes()).padStart(2,"0");
+  return d.getDate()+" "+MON[d.getMonth()]+" "+d.getFullYear()+", "+h+":"+mm+" "+ampm;
+}
 function initials(name){ return String(name||"?").trim().split(/\s+/).slice(0,2).map(w=>w[0]).join("").toUpperCase()||"?"; }
 function digits(p){ return String(p||"").replace(/[^\d]/g,""); }
 
@@ -364,10 +425,14 @@ function renderMoney(){
         const s=DB.students.find(x=>x.id===p.student_id);
         return `<div class="card row" style="justify-content:space-between">
           <div><div style="font-weight:700">${esc(s?s.name:"(deleted)")}</div>
-          <div class="muted" style="font-size:12px">${fmtDate(p.paid_on)} · ${esc(p.method||"Cash")}${p.for_month?(" · "+esc(p.for_month)):""}</div></div>
+          <div class="muted" style="font-size:12px">${fmtDate(p.paid_on)} · ${esc(p.method||"Cash")}${p.for_month?(" · "+esc(p.for_month)):""}</div>
+          <div class="muted" style="font-size:11px">Entered ${fmtDateTime(p.created_at)}</div></div>
           <div style="font-weight:800;color:var(--green)">${money(p.amount)}</div>
         </div>`;
       }).join(""):`<div class="card empty"><div class="big">🧾</div>No payments recorded yet.</div>`}
+
+    <div style="height:6px"></div>
+    <button class="btn ghost block" onclick="openPaymentLog()">🕑 Full payment log (with entry times)</button>
    </div>`;
 }
 
@@ -705,15 +770,19 @@ function openTeacherForm(id){
     </div>
     <label class="f">Notes</label><textarea class="in" id="tNotes" placeholder="optional">${esc(t.notes||"")}</textarea>
     <div style="height:16px"></div>
-    <button class="btn primary block" onclick="saveTeacher('${id||""}')">${id?"Save changes":"Add teacher"}</button>
+    <button class="btn primary block" id="teacherBtn" onclick="saveTeacher('${id||""}')">${id?"Save changes":"Add teacher"}</button>
   `);
 }
 async function saveTeacher(id){
-  const name=val("tName"); if(!name){ toast("Name is required"); return; }
-  const row={ name, role:val("tRole"), subject:val("tSubject"), phone:val("tPhone"), email:val("tEmail"), notes:val("tNotes") };
-  try{ if(id) await api.update("teachers",id,row); else await api.insert("teachers",row);
-    await loadAll(); closeSheet(); render(); toast(id?"Teacher updated ✓":"Teacher added ✓");
-  }catch(e){ toast("Error: "+(e.message||e)); }
+  // Same guard as the payment form: without it, a second tap on "Add teacher"
+  // while the first insert is still in flight creates a duplicate teacher.
+  return submitOnce("teacherBtn", "⏳ Saving…", async () => {
+    const name=val("tName"); if(!name){ toast("Name is required"); return; }
+    const row={ name, role:val("tRole"), subject:val("tSubject"), phone:val("tPhone"), email:val("tEmail"), notes:val("tNotes") };
+    try{ if(id) await api.update("teachers",id,row); else await api.insert("teachers",row);
+      await loadAll(); closeSheet(); render(); toast(id?"Teacher updated ✓":"Teacher added ✓");
+    }catch(e){ toast("Error: "+(e.message||e)); }
+  });
 }
 async function deleteTeacher(id){
   if(!confirm("Delete this teacher? Their students stay but become unassigned.")) return;
@@ -757,37 +826,40 @@ function openStudentForm(id){
     <label class="f">Notes</label><textarea class="in" id="sNotes" placeholder="optional">${esc(s.notes||"")}</textarea>
     ${DB.teachers.length?"":`<div class="banner" style="margin-top:12px">💡 Tip: add a teacher first to assign students to them.</div>`}
     <div style="height:16px"></div>
-    <button class="btn primary block" onclick="saveStudent('${id||""}')">${id?"Save changes":"Add student"}</button>
+    <button class="btn primary block" id="studentBtn" onclick="saveStudent('${id||""}')">${id?"Save changes":"Add student"}</button>
   `);
 }
 // Keep "Next fee due" one month after the chosen start date (still editable afterwards)
 window._syncDue=function(){ const j=el("sJoin"); const d=el("sDue"); if(j&&d&&j.value) d.value=addMonthsISO(j.value,1); };
 async function saveStudent(id){
-  const name=val("sName"); if(!name){ toast("Name is required"); return; }
-  const fee=Number(val("sFee")||0);
-  const row={
-    name, monthly_fee:fee, grade:val("sGrade"), plan_name:val("sPlan")||"Monthly", status:val("sStatus"),
-    join_date:val("sJoin")||todayISO(), next_due_date:val("sDue")||null,
-    teacher_id:val("sTeacher")||null, co_teacher_id:val("sCo")||null, co_teacher_fee:Number(val("sCoFee")||0),
-    phone:val("sPhone"), guardian_phone:val("sGuardian"), guardian_name:val("sGuardianName"),
-    email:val("sEmail"), notes:val("sNotes")
-  };
-  const save=(r)=> id ? api.update("students",id,r) : api.insert("students",r);
-  try{
-    let saved;
-    try{ saved=await save(row); }
-    catch(err){
-      // Graceful fallback if the guardian_name column hasn't been added to the database yet
-      if(String((err&&(err.message||err))||"").toLowerCase().includes("guardian_name")){
-        const rest={...row}; delete rest.guardian_name;
-        saved=await save(rest);
-        toast("Saved — add the guardian_name column to store parent names");
-      } else throw err;
-    }
-    await loadAll(); closeSheet(); render();
-    toast(id?"Student updated ✓":"Student added ✓");
-    if(!id && (saved&&(saved.phone||saved.guardian_phone))){ setTimeout(()=>askWelcome(saved.id),300); }
-  }catch(e){ toast("Error: "+(e.message||e)); }
+  // Same guard again — a duplicate student is harder to spot than a duplicate
+  // payment, because nothing about the second row looks wrong on its own.
+  return submitOnce("studentBtn", "⏳ Saving…", async () => {
+    const name=val("sName"); if(!name){ toast("Name is required"); return; }
+    const fee=Number(val("sFee")||0);
+    const row={
+      name, monthly_fee:fee, grade:val("sGrade"), plan_name:val("sPlan")||"Monthly", status:val("sStatus"),
+      join_date:val("sJoin")||todayISO(), next_due_date:val("sDue")||null,
+      teacher_id:val("sTeacher")||null, co_teacher_id:val("sCo")||null, co_teacher_fee:Number(val("sCoFee")||0),
+      phone:val("sPhone"), guardian_phone:val("sGuardian"), guardian_name:val("sGuardianName"),
+      email:val("sEmail"), notes:val("sNotes")
+    };
+    const save=(r)=> id ? api.update("students",id,r) : api.insert("students",r);
+    try{
+      let saved;
+      try{ saved=await save(row); }
+      catch(err){
+        // Graceful fallback if the guardian_name column hasn't been added to the database yet
+        if(String((err&&(err.message||err))||"").toLowerCase().includes("guardian_name")){
+          const rest={...row}; delete rest.guardian_name;
+          saved=await save(rest);
+          toast("Saved — add the guardian_name column to store parent names");
+        } else throw err;
+      }
+      await loadAll(); closeSheet(); render();
+      toast(id?"Student updated ✓":"Student added ✓");
+      if(!id && (saved&&(saved.phone||saved.guardian_phone))){ setTimeout(()=>askWelcome(saved.id),300); }
+    }catch(e){ toast("Error: "+(e.message||e)); }  });
 }
 function askWelcome(id){ const s=DB.students.find(x=>x.id===id); if(!s) return;
   if(confirm("Send a welcome WhatsApp message to "+s.name+"?")) openWA(s.phone||s.guardian_phone, msgWelcome(s)); }
@@ -796,6 +868,111 @@ async function deleteStudent(id){
   if(!confirm("Delete this student and their payment history?")) return;
   try{ await api.remove("students",id); await loadAll(); closeSheet(); render(); toast("Student deleted"); }
   catch(e){ toast("Error: "+(e.message||e)); }
+}
+
+/* ============================================================
+   PAYMENT LOG — every payment, and exactly when it was entered
+
+   WHY THIS EXISTS, beyond being asked for.
+
+   Until now the only date on a payment was `paid_on`, which you type in and can
+   backdate. There was no way to answer "when did I actually enter this?" — so
+   when the same payment appeared twice, there was nothing to distinguish the
+   real one from the accidental second tap.
+
+   `created_at` is written by the database and cannot be edited, so it is the
+   honest record. This screen sorts by it, newest first, which is the order you
+   remember things in.
+
+   THE DUPLICATE FLAG. The double-tap bug has been running for a while, so
+   there are probably duplicates in the data already. Two payments for the SAME
+   student, the SAME amount, entered within two minutes of each other are almost
+   certainly one payment recorded twice — a real second payment on the same day
+   for the same amount, entered within two minutes, essentially does not happen
+   in a tuition academy. They are flagged rather than deleted: this app should
+   point at the problem, not quietly rewrite your money records.
+   ============================================================ */
+function paymentsNewestFirst(){
+  return DB.payments.slice().sort((a,b)=>
+    String(b.created_at||"").localeCompare(String(a.created_at||"")) ||
+    String(b.paid_on||"").localeCompare(String(a.paid_on||"")));
+}
+
+/** ids of payments that look like an accidental repeat of the one before. */
+function suspectedDuplicates(){
+  const flagged=new Set();
+  const byStudent={};
+  for(const p of DB.payments){ (byStudent[p.student_id]=byStudent[p.student_id]||[]).push(p); }
+  for(const list of Object.values(byStudent)){
+    const sorted=list.slice().sort((a,b)=>String(a.created_at||"").localeCompare(String(b.created_at||"")));
+    for(let i=1;i<sorted.length;i++){
+      const a=sorted[i-1], b=sorted[i];
+      if(Number(a.amount)!==Number(b.amount)) continue;
+      const ta=new Date(a.created_at||0).getTime(), tb=new Date(b.created_at||0).getTime();
+      if(!ta||!tb) continue;
+      // Two minutes. Wide enough to catch a slow connection and a frustrated
+      // second tap; far too narrow to catch two genuine payments.
+      if(tb-ta <= 120000) flagged.add(b.id);
+    }
+  }
+  return flagged;
+}
+
+function openPaymentLog(){
+  const rows=paymentsNewestFirst();
+  const dupes=suspectedDuplicates();
+  const dupCount=rows.filter(p=>dupes.has(p.id)).length;
+
+  openSheet(`
+    <div class="sheettop"><h3>Payment log</h3><button class="iconbtn" style="background:var(--card2)" onclick="closeSheet()">✕</button></div>
+    <div class="muted" style="margin:0 2px 10px;font-size:12.5px">
+      ${rows.length} payment${rows.length===1?"":"s"}, newest first. <b>Paid on</b> is the date you entered;
+      <b>Entered</b> is when it was actually saved — that one cannot be changed.
+    </div>
+    ${dupCount?`<div class="banner" style="margin-bottom:10px">⚠️ ${dupCount} payment${dupCount===1?" looks":"s look"} like an accidental double entry —
+      same student, same amount, saved within two minutes. Check each one and remove it if it is a repeat.</div>`:""}
+    <div style="max-height:60vh;overflow:auto;-webkit-overflow-scrolling:touch">
+    ${rows.length? rows.map(p=>{
+      const s=DB.students.find(x=>x.id===p.student_id);
+      const dup=dupes.has(p.id);
+      return `<div class="card" style="${dup?"border:1px solid var(--red);background:rgba(220,38,38,.05)":""}">
+        <div class="row" style="justify-content:space-between;align-items:flex-start">
+          <div style="min-width:0">
+            <div style="font-weight:700">${esc(s?s.name:"(deleted student)")}${dup?` <span style="color:var(--red);font-size:11.5px;font-weight:700">possible duplicate</span>`:""}</div>
+            <div class="muted" style="font-size:12px">Paid on ${fmtDate(p.paid_on)} · ${esc(p.method||"Cash")}${p.for_month?(" · "+esc(p.for_month)):""}</div>
+            <div class="muted" style="font-size:11.5px">Entered ${fmtDateTime(p.created_at)}</div>
+            ${p.note?`<div class="muted" style="font-size:11.5px">Note: ${esc(p.note)}</div>`:""}
+          </div>
+          <div style="text-align:right;flex-shrink:0">
+            <div style="font-weight:800;color:var(--green)">${money(p.amount)}</div>
+            <button class="btn sm ghost" style="margin-top:6px" onclick="deletePayment('${p.id}')">Delete</button>
+          </div>
+        </div>
+      </div>`;
+    }).join(""):`<div class="card empty"><div class="big">🧾</div>No payments recorded yet.</div>`}
+    </div>
+  `);
+}
+
+/*
+  Deleting a payment is deleting a money record, so it asks first and names the
+  student and the amount in the question — "are you sure?" on its own is a
+  question nobody reads. Note it does NOT roll the student's next due date back:
+  that date may have been advanced by several later payments, and silently
+  moving it would create a second wrong number while fixing the first. If the
+  due date is now wrong, edit the student.
+*/
+async function deletePayment(payId){
+  const p=DB.payments.find(x=>x.id===payId); if(!p) return;
+  const s=DB.students.find(x=>x.id===p.student_id);
+  const who=s?s.name:"a deleted student";
+  if(!confirm(`Delete this payment?\n\n${who} — ${money(p.amount)}\nEntered ${fmtDateTime(p.created_at)}\n\nThis cannot be undone. The student's next due date is not changed.`)) return;
+  try{
+    await api.remove("payments",payId);
+    await loadAll();
+    toast("Payment deleted");
+    closeSheet(); render(); openPaymentLog();
+  }catch(e){ toast("Error: "+(e.message||e)); }
 }
 
 /* ---------- Payment ---------- */
@@ -817,20 +994,24 @@ function openPaymentForm(id){
     <select class="in" id="pAdvance"><option value="1" selected>+1 month</option><option value="0">Don't change</option><option value="2">+2 months</option><option value="3">+3 months</option></select>
     <label class="f">Note</label><input class="in" id="pNote" placeholder="optional"/>
     <div style="height:16px"></div>
-    <button class="btn primary block" onclick="savePayment('${id}')">✅ Save payment</button>
+    <button class="btn primary block" id="payBtn" onclick="savePayment('${id}')">✅ Save payment</button>
   `);
 }
 async function savePayment(id){
-  const s=DB.students.find(x=>x.id===id); if(!s) return;
-  const amt=Number(val("pAmt")||0); if(!amt){ toast("Enter an amount"); return; }
-  const pay={ student_id:id, amount:amt, paid_on:val("pDate")||todayISO(), method:val("pMethod"), for_month:val("pMonth"), note:val("pNote") };
-  const adv=Number(val("pAdvance")||0);
-  try{
-    const saved=await api.insert("payments",pay);
-    if(adv>0){ const base=s.next_due_date||todayISO(); await api.update("students",id,{ next_due_date:addMonthsISO(base,adv) }); }
-    await loadAll(); closeSheet(); render(); toast("Payment saved ✓");
-    openReceiptOptions(id, saved.id);
-  }catch(e){ toast("Error: "+(e.message||e)); }
+  // Wrapped so a second tap while the first save is still travelling to
+  // Supabase cannot write a second payment row. See submitOnce().
+  return submitOnce("payBtn", "⏳ Saving…", async () => {
+    const s=DB.students.find(x=>x.id===id); if(!s) return;
+    const amt=Number(val("pAmt")||0); if(!amt){ toast("Enter an amount"); return; }
+    const pay={ student_id:id, amount:amt, paid_on:val("pDate")||todayISO(), method:val("pMethod"), for_month:val("pMonth"), note:val("pNote") };
+    const adv=Number(val("pAdvance")||0);
+    try{
+      const saved=await api.insert("payments",pay);
+      if(adv>0){ const base=s.next_due_date||todayISO(); await api.update("students",id,{ next_due_date:addMonthsISO(base,adv) }); }
+      await loadAll(); closeSheet(); render(); toast("Payment saved ✓");
+      openReceiptOptions(id, saved.id);
+    }catch(e){ toast("Error: "+(e.message||e)); }
+  });
 }
 
 /* ============================================================

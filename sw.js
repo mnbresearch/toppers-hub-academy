@@ -5,7 +5,7 @@
    - Icons + CDN libraries: CACHE-FIRST (they rarely change), with network fallback.
    - Supabase API + version.json: NETWORK-ONLY (never served stale).
 */
-const CACHE = "toppershub-v6";
+const CACHE = "toppershub-v7";
 const SHELL = [
   "./",
   "./index.html",

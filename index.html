@@ -103,6 +103,12 @@
     .btn.sm{padding:8px 11px;font-size:12.5px;border-radius:10px}
     .btn.block{width:100%}
     .btn:active{transform:scale(.97)}
+    /* A saving button must LOOK unavailable, not just refuse the tap. Half the
+       double-payment problem was that the button looked completely normal while
+       the save was travelling to the server, so pressing it again was the
+       obvious thing to do. */
+    .btn:disabled{opacity:.6;cursor:progress;filter:grayscale(.25);box-shadow:none}
+    .btn:disabled:active{transform:none}
     @media(hover:hover){.btn.primary:hover,.btn.wa:hover{filter:brightness(1.06)}.btn.ghost:hover{border-color:#cdd8ea;background:var(--card2)}}
     .btnrow{display:flex;gap:8px;flex-wrap:wrap}
 
