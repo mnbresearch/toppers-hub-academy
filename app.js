@@ -129,7 +129,12 @@ function fmtDateTime(iso){
   return d.getDate()+" "+MON[d.getMonth()]+" "+d.getFullYear()+", "+h+":"+mm+" "+ampm;
 }
 function initials(name){ return String(name||"?").trim().split(/\s+/).slice(0,2).map(w=>w[0]).join("").toUpperCase()||"?"; }
-function digits(p){ return String(p||"").replace(/[^\d]/g,""); }
+function digits(p){
+  let d = String(p||"").replace(/[^\d]/g,"");
+  if(d.length === 11 && d.startsWith("0")) d = d.slice(1);
+  if(d.length === 10) d = "91" + d;
+  return d;
+}
 
 function dueInfo(s){
   if(s.status && s.status!=="Active") return { key:"paused", label:s.status, cls:"b-gray", order:5 };
@@ -273,7 +278,7 @@ function renderStudents(){
     if(filter==="overdue") return k==="overdue";
     if(filter==="soon") return k==="today"||k==="soon";
     if(filter==="ok") return k==="ok";
-    if(filter==="paused") return s.status!=="Active";
+    if(filter==="paused") return s.status==="Paused";
     return true;
   });
   // sort
@@ -285,7 +290,7 @@ function renderStudents(){
     all:DB.students.length,
     overdue:DB.students.filter(s=>dueInfo(s).key==="overdue").length,
     soon:DB.students.filter(s=>["today","soon"].includes(dueInfo(s).key)).length,
-    paused:DB.students.filter(s=>s.status!=="Active").length,
+    paused:DB.students.filter(s=>s.status==="Paused").length,
   };
   const chip=(k,label)=>`<button class="chip ${filter===k?"chip-on":""}" onclick="STATE.studentFilter='${k}';render()">${label}${counts[k]!=null?` <span class="chip-n">${counts[k]}</span>`:""}</button>`;
 
@@ -837,6 +842,7 @@ async function saveStudent(id){
   return submitOnce("studentBtn", "⏳ Saving…", async () => {
     const name=val("sName"); if(!name){ toast("Name is required"); return; }
     const fee=Number(val("sFee")||0);
+    if(isNaN(fee) || fee < 0){ toast("Monthly fee must be 0 or more"); return; }
     const row={
       name, monthly_fee:fee, grade:val("sGrade"), plan_name:val("sPlan")||"Monthly", status:val("sStatus"),
       join_date:val("sJoin")||todayISO(), next_due_date:val("sDue")||null,
@@ -866,7 +872,13 @@ function askWelcome(id){ const s=DB.students.find(x=>x.id===id); if(!s) return;
 
 async function deleteStudent(id){
   if(!confirm("Delete this student and their payment history?")) return;
-  try{ await api.remove("students",id); await loadAll(); closeSheet(); render(); toast("Student deleted"); }
+  try{
+    if(!CLOUD){
+      setLocal("payments", getLocal("payments").filter(p=>p.student_id!==id));
+      setLocal("attendance", getLocal("attendance").filter(a=>a.student_id!==id));
+    }
+    await api.remove("students",id); await loadAll(); closeSheet(); render(); toast("Student deleted");
+  }
   catch(e){ toast("Error: "+(e.message||e)); }
 }
 
