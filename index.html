@@ -224,6 +224,30 @@
     .banner{background:#eaf0fe;border:1px solid #cfdcfb;color:#1c47b8;
       padding:11px 13px;border-radius:12px;font-size:12.5px;margin-bottom:12px;line-height:1.5}
 
+    @media (prefers-color-scheme: dark){
+      :root{
+        --bg:#090d16; --card:#121a2b; --card2:#18233a; --line:#202f4d;
+        --text:#f8fafc; --muted:#94a3b8; --shadow:0 4px 14px rgba(0,0,0,.35);
+        --shadow-lg:0 14px 34px rgba(0,0,0,.5);
+      }
+      header{background:linear-gradient(135deg,#0f172a 0%,#1e3a8a 60%,#1d4ed8 100%)}
+      nav.tabs{background:rgba(18,26,43,.88);border-top-color:var(--line)}
+      .search{background:var(--card);border-color:var(--line);color:var(--text)}
+      .chip{background:var(--card);border-color:var(--line);color:var(--muted)}
+      .in,select.in,textarea.in{background:var(--card2);border-color:var(--line);color:var(--text)}
+      .in:focus,select.in:focus,textarea.in:focus{background:#1d2d4c}
+      .banner{background:#172554;border-color:#1e3a8a;color:#93c5fd}
+      .sheettop .iconbtn{background:var(--card2) !important;color:var(--text)}
+      .sheet{background:var(--bg);border-color:var(--line)}
+      .grabber{background:#334155}
+      .bartrack{background:var(--card2)}
+      .b-gray{background:#1e293b;color:#94a3b8;border-color:#334155}
+      .b-green{background:#064e3b;color:#6ee7b7;border-color:#047857}
+      .b-amber{background:#78350f;color:#fcd34d;border-color:#b45309}
+      .b-red{background:#7f1d1d;color:#fca5a5;border-color:#b91c1c}
+      .toast{background:#1e293b;color:#fff;border:1px solid #334155}
+    }
+
     @media (prefers-reduced-motion: reduce){
       *{animation-duration:.001ms !important;transition-duration:.001ms !important}
     }
@@ -266,6 +290,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="config.js"></script>
   <script src="app.js"></script>
+  <input type="file" id="importBackupInput" accept=".json,application/json" style="display:none" onchange="importData(this)"/>
   <script>
     if ('serviceWorker' in navigator) {
       // Reload once when a new service worker takes control (forces the new build in).

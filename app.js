@@ -6,7 +6,7 @@
    ============================================================ */
 "use strict";
 
-const APP_VERSION = "2026-09-07-1";   // bump on every deploy — must match version.json
+const APP_VERSION = "2026-10-26-1";   // bump on every deploy — must match version.json
 const CFG = window.APP_CONFIG || {};
 const CUR = CFG.CURRENCY || "₹";
 const DUE_SOON = Number(CFG.DUE_SOON_DAYS || 5);
@@ -265,27 +265,8 @@ function studentRow(s,i,showDue){
 /* ---------- STUDENTS ---------- */
 function renderStudents(){
   el("hdrSub").textContent = "Students";
-  const q=STATE.search.toLowerCase().trim();
   const filter=STATE.studentFilter||"all";
   const sort=STATE.studentSort||"due";
-  let list = DB.students.slice();
-  if(q) list=list.filter(s=>[s.name,s.grade,s.guardian_name,s.phone,s.guardian_phone,teacherName(s.teacher_id)]
-      .some(v=>String(v||"").toLowerCase().includes(q)));
-  // filter chips
-  list=list.filter(s=>{
-    const k=dueInfo(s).key;
-    if(filter==="all") return true;
-    if(filter==="overdue") return k==="overdue";
-    if(filter==="soon") return k==="today"||k==="soon";
-    if(filter==="ok") return k==="ok";
-    if(filter==="paused") return s.status==="Paused";
-    return true;
-  });
-  // sort
-  if(sort==="name") list.sort((a,b)=>(a.name||"").localeCompare(b.name||""));
-  else if(sort==="fee") list.sort((a,b)=>Number(b.monthly_fee||0)-Number(a.monthly_fee||0));
-  else list.sort((a,b)=>dueInfo(a).order-dueInfo(b).order || (a.next_due_date||"").localeCompare(b.next_due_date||""));
-
   const counts={
     all:DB.students.length,
     overdue:DB.students.filter(s=>dueInfo(s).key==="overdue").length,
@@ -296,8 +277,9 @@ function renderStudents(){
 
   app().innerHTML = `
    <div class="view">
-    <div class="row" style="gap:8px;margin-bottom:8px">
-      <input class="search" style="margin:0" placeholder="🔍 Search name, parent, phone…" value="${esc(STATE.search)}" oninput="STATE.search=this.value;render()"/>
+    <div class="row" style="gap:8px;margin-bottom:8px;position:relative">
+      <input class="search" id="stuSearch" style="margin:0;padding-right:${STATE.search?'38px':'14px'}" placeholder="🔍 Search name, parent, phone… (/)" value="${esc(STATE.search)}" oninput="STATE.search=this.value;renderStudentsList()"/>
+      ${STATE.search?`<button class="iconbtn" style="position:absolute;right:52px;top:50%;transform:translateY(-50%);width:26px;height:26px;border-radius:50%;background:rgba(100,116,139,.2);color:var(--text);font-size:12px;border:none" onclick="STATE.search='';render()">✕</button>`:''}
       <button class="btn primary" style="flex:none" onclick="openStudentForm()">＋</button>
     </div>
     <div class="chiprow">
@@ -308,12 +290,47 @@ function renderStudents(){
         <option value="fee" ${sort==="fee"?"selected":""}>Sort: Fee (high→low)</option>
       </select>
     </div>
-    <div class="muted" style="font-size:12px;margin:2px 4px 12px">${list.length} student${list.length===1?"":"s"}${filter!=="all"?" · filtered":""}</div>
+    <div id="stuListContainer">
+      ${renderStudentsRows()}
+    </div>
+   </div>`;
+}
+
+function getFilteredStudents(){
+  const q=(STATE.search||"").toLowerCase().trim();
+  const filter=STATE.studentFilter||"all";
+  const sort=STATE.studentSort||"due";
+  let list = DB.students.slice();
+  if(q) list=list.filter(s=>[s.name,s.grade,s.guardian_name,s.phone,s.guardian_phone,teacherName(s.teacher_id)]
+      .some(v=>String(v||"").toLowerCase().includes(q)));
+  list=list.filter(s=>{
+    const k=dueInfo(s).key;
+    if(filter==="all") return true;
+    if(filter==="overdue") return k==="overdue";
+    if(filter==="soon") return k==="today"||k==="soon";
+    if(filter==="ok") return k==="ok";
+    if(filter==="paused") return s.status==="Paused";
+    return true;
+  });
+  if(sort==="name") list.sort((a,b)=>(a.name||"").localeCompare(b.name||""));
+  else if(sort==="fee") list.sort((a,b)=>Number(b.monthly_fee||0)-Number(a.monthly_fee||0));
+  else list.sort((a,b)=>dueInfo(a).order-dueInfo(b).order || (a.next_due_date||"").localeCompare(b.next_due_date||""));
+  return list;
+}
+
+function renderStudentsRows(){
+  const filter=STATE.studentFilter||"all";
+  const list = getFilteredStudents();
+  return `<div class="muted" style="font-size:12px;margin:2px 4px 12px">${list.length} student${list.length===1?"":"s"}${filter!=="all"?" · filtered":""}</div>
     ${list.length? list.map(s=>studentRow(s)).join("") :
       (DB.students.length
         ? `<div class="card empty"><div class="big">🔍</div>No students match this filter.</div>`
-        : `<div class="card empty"><div class="big">🎓</div>No students yet.<br/><button class="btn primary" style="margin-top:12px" onclick="openStudentForm()">＋ Add your first student</button></div>`)}
-   </div>`;
+        : `<div class="card empty"><div class="big">🎓</div>No students yet.<br/><button class="btn primary" style="margin-top:12px" onclick="openStudentForm()">＋ Add your first student</button></div>`)}`;
+}
+
+function renderStudentsList(){
+  const c = el("stuListContainer");
+  if(c) c.innerHTML = renderStudentsRows();
 }
 
 /* ---------- TEACHERS ---------- */
@@ -470,7 +487,11 @@ async function markAllPresent(date){
 function renderAttendance(){
   el("hdrSub").textContent="Attendance";
   const date=STATE.attDate||todayISO(); STATE.attDate=date;
-  const active=DB.students.filter(s=>s.status==="Active").sort((a,b)=>(a.name||"").localeCompare(b.name||""));
+  const teacherFilter = STATE.attTeacher||"all";
+  let active=DB.students.filter(s=>s.status==="Active");
+  if(teacherFilter!=="all") active=active.filter(s=>s.teacher_id===teacherFilter);
+  active.sort((a,b)=>(a.name||"").localeCompare(b.name||""));
+
   const dayRecs=DB.attendance.filter(a=>a.date===date && active.some(s=>s.id===a.student_id));
   const present=dayRecs.filter(a=>a.status==="Present").length;
   const late=dayRecs.filter(a=>a.status==="Late").length;
@@ -485,6 +506,13 @@ function renderAttendance(){
         <div class="muted" style="font-size:11px">${fmtDate(date)}</div></div>
       <button class="btn ghost sm" onclick="shiftAttDate(1)" ${isToday?'disabled style="opacity:.35"':''}>Next ›</button>
     </div>
+    ${DB.teachers.length>1?`
+    <div style="margin-bottom:8px">
+      <select class="chip chip-sort" style="width:100%;border-radius:12px;padding:8px 12px" onchange="STATE.attTeacher=this.value;render()">
+        <option value="all" ${teacherFilter==="all"?"selected":""}>👩‍🏫 All teachers (${DB.students.filter(s=>s.status==="Active").length} active students)</option>
+        ${DB.teachers.map(t=>`<option value="${t.id}" ${teacherFilter===t.id?"selected":""}>${esc(t.name)} (${DB.students.filter(s=>s.status==="Active"&&s.teacher_id===t.id).length})</option>`).join("")}
+      </select>
+    </div>`:""}
     <div class="stats" style="grid-template-columns:repeat(3,1fr)">
       <div class="stat g"><div class="l">Present</div><div class="n">${present+late}</div></div>
       <div class="stat r"><div class="l">Absent</div><div class="n">${absent}</div></div>
@@ -505,7 +533,7 @@ function renderAttendance(){
             ? `<button class="btn wa sm" style="flex:none;margin-left:3px" title="Tell parent" onclick="openWA('${esc(parentPhone(s))}',msgAbsent(DB.students.find(x=>x.id==='${s.id}'),'${date}'))">💬</button>`
             : ""}</div>
       </div>`;
-    }).join("") : `<div class="card empty"><div class="big">📋</div>Add students first, then take attendance here.</div>`}
+    }).join("") : `<div class="card empty"><div class="big">📋</div>${teacherFilter!=="all"?"No active students assigned to this teacher.":"Add students first, then take attendance here."}</div>`}
     <div class="muted center" style="font-size:11.5px;margin-top:6px">Tap P / L / A to mark. Tap the same button again to clear.</div>
    </div>`;
 }
@@ -1085,6 +1113,8 @@ el("menuBtn").addEventListener("click",()=>{
     <div style="height:8px"></div>
     <button class="btn ghost block" onclick="exportData()">⬇️ Export full backup (JSON)</button>
     <div style="height:8px"></div>
+    <button class="btn ghost block" onclick="const f=el('importBackupInput');if(f)f.click()">⬆️ Restore backup (JSON)</button>
+    <div style="height:8px"></div>
     ${CLOUD?`<button class="btn ghost block" onclick="signOut()">🚪 Log out</button>`
            :`<div class="banner">Add Supabase keys in <b>config.js</b> to enable cloud sync & login. See README.</div>`}
   `);
@@ -1093,6 +1123,65 @@ function exportData(){
   const blob=new Blob([JSON.stringify({exported:new Date().toISOString(),...DB},null,2)],{type:"application/json"});
   const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="toppers-hub-backup-"+todayISO()+".json"; a.click();
   toast("Backup downloaded ✓");
+}
+
+async function importData(input){
+  const file = input && input.files && input.files[0];
+  if(!file) return;
+  try{
+    const text = await file.text();
+    const data = JSON.parse(text);
+    if(!data || typeof data !== "object"){ toast("Invalid backup file"); return; }
+    const hasAny = Array.isArray(data.students) || Array.isArray(data.teachers) || Array.isArray(data.payments);
+    if(!hasAny){ toast("Backup contains no recognisable records"); return; }
+    const summary = [
+      (data.students||[]).length + " students",
+      (data.teachers||[]).length + " teachers",
+      (data.payments||[]).length + " payments"
+    ].join(", ");
+    if(!confirm(`Restore backup with ${summary}?\n\nExisting records will be preserved and merged.`)){
+      input.value = ""; return;
+    }
+    if(!CLOUD){
+      if(Array.isArray(data.teachers)){
+        const existing = getLocal("teachers");
+        const map = new Map(existing.map(t=>[t.id,t]));
+        data.teachers.forEach(t=>map.set(t.id,t));
+        setLocal("teachers", Array.from(map.values()));
+      }
+      if(Array.isArray(data.students)){
+        const existing = getLocal("students");
+        const map = new Map(existing.map(s=>[s.id,s]));
+        data.students.forEach(s=>map.set(s.id,s));
+        setLocal("students", Array.from(map.values()));
+      }
+      if(Array.isArray(data.payments)){
+        const existing = getLocal("payments");
+        const map = new Map(existing.map(p=>[p.id,p]));
+        data.payments.forEach(p=>map.set(p.id,p));
+        setLocal("payments", Array.from(map.values()));
+      }
+      if(Array.isArray(data.attendance)){
+        const existing = getLocal("attendance");
+        const map = new Map(existing.map(a=>[a.id||(a.student_id+"_"+a.date),a]));
+        data.attendance.forEach(a=>map.set(a.id||(a.student_id+"_"+a.date),a));
+        setLocal("attendance", Array.from(map.values()));
+      }
+    } else {
+      if(Array.isArray(data.teachers) && data.teachers.length) await sb.from("teachers").upsert(data.teachers);
+      if(Array.isArray(data.students) && data.students.length) await sb.from("students").upsert(data.students);
+      if(Array.isArray(data.payments) && data.payments.length) await sb.from("payments").upsert(data.payments);
+      if(Array.isArray(data.attendance) && data.attendance.length) await sb.from("attendance").upsert(data.attendance);
+    }
+    await loadAll();
+    closeSheet();
+    render();
+    toast("Backup restored ✓");
+  } catch(e){
+    toast("Restore failed: " + (e.message || e));
+  } finally {
+    if(input) input.value = "";
+  }
 }
 function _csv(v){ v=String(v==null?"":v); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; }
 function _download(name, text, type){ const blob=new Blob([text],{type:type||"text/csv;charset=utf-8"});
@@ -1315,3 +1404,21 @@ async function startApp(){
   if(session){ await startApp(); }
   else { el("appHeader").classList.remove("hidden"); el("hdrName").textContent=CFG.ACADEMY_NAME||"Toppers Hub"; el("hdrSub").textContent="Please log in"; renderAuth("login"); }
 })();
+
+/* Keyboard shortcuts & network feedback */
+document.addEventListener("keydown", e => {
+  if (e.key === "/" && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName) && !e.metaKey && !e.ctrlKey) {
+    if (STATE.view !== "students") {
+      STATE.view = "students";
+      render();
+    }
+    const s = el("stuSearch");
+    if (s) {
+      e.preventDefault();
+      s.focus();
+      s.select();
+    }
+  }
+});
+window.addEventListener("online", () => toast("☁️ Online — connected"));
+window.addEventListener("offline", () => toast("📱 Offline mode — working on local device"));
